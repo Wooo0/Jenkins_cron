@@ -8,6 +8,8 @@ yarn-error.log*
 *.db
 *.sqlite
 *.sqlite3
+cron_jenkins.db
+*.mdb
 
 # Environment variables
 .env
@@ -69,3 +71,21 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Docker
+.dockerignore.bak
+docker-compose.override.yml
+
+# Build outputs
+dist/
+build/
+out/
+
+# Lock files (keep package-lock.json but ignore others)
+yarn.lock
+pnpm-lock.yaml
+
+# Editor backup files
+*.bak
+*.backup
+*.orig

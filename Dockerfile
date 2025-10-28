@@ -1,39 +1,32 @@
-# 构建阶段
-FROM opsdy.cdou.edu.cn:32399/public/node:22-alpine AS builder
-
-# 设置工作目录
-WORKDIR /usr/src/app
-
-# 安装编译依赖
-RUN apk add --no-cache \
-    python3 \
-    make \
-    g++ \
-    sqlite-dev \
-    libc6-compat
-
-# 复制package.json和package-lock.json
-COPY package*.json ./
-
-# 安装所有依赖（包括devDependencies用于构建）
-RUN npm ci
-
-# 运行时阶段
+# 使用官方Node.js运行时作为基础镜像
 FROM opsdy.cdou.edu.cn:32399/public/node:22-alpine
 
 # 设置工作目录
 WORKDIR /usr/src/app
 
-# 安装运行时依赖
+# 配置国内镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
+# 安装编译依赖（sqlite3需要）
 RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
     sqlite \
-    libc6-compat
+    sqlite-dev
 
-# 从构建阶段复制node_modules
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-
-# 复制package.json（运行时需要）
+# 复制package.json和package-lock.json（如果存在）
 COPY package*.json ./
+
+# 配置npm使用国内镜像源
+RUN npm config set registry https://registry.npmmirror.com/
+RUN npm config set sqlite3_binary_host_mirror https://npmmirror.com/mirrors/sqlite3/
+
+# 安装依赖
+RUN npm ci --only=production
+
+# 清理构建依赖以减小镜像大小
+RUN apk del make g++ python3
 
 # 复制应用源代码
 COPY . .

@@ -17,8 +17,9 @@ const PORT = process.env.PORT || 3000;
 // 配置管理
 const config = require('./config');
 
-// 检查是否已通过环境变量配置了管理员账户
-const hasAdminConfig = process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD;
+// 检查是否已通过环境变量配置了管理员账户（不是默认值）
+const hasAdminConfig = process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD &&
+                      (process.env.ADMIN_USERNAME !== 'admin' || process.env.ADMIN_PASSWORD !== 'admin123');
 
 // 数据库管理器
 class DatabaseManager {

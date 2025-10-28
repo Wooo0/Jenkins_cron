@@ -666,11 +666,11 @@ let cronManager;
 // 初始化API路由
 app.get('/api/init/status', async (req, res) => {
     try {
-        const isInitialized = await isDatabaseInitialized();
+        const isInitialized = await dbManager.isDatabaseInitialized();
         res.json({
             initialized: isInitialized,
             hasAdminConfig: hasAdminConfig,
-            adminUsername: hasAdminConfig ? config.adminUsername : null
+            adminUsername: hasAdminConfig ? config.admin.username : null
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

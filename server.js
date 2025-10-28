@@ -1119,10 +1119,6 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
                     [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
                 
                 res.status(500).json({ error: '任务执行失败: ' + error.message });
-            }
-        } catch (error) {
-            console.error('立即执行任务失败:', error);
-            res.status(500).json({ error: '立即执行任务失败' });
         }
     } catch (error) {
         console.error('获取任务信息失败:', error);

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jenkins定时任务管理</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- 初始化界面 -->
+    <div id="init-container" class="login-container" style="display: none;">
+        <div class="login-form">
+            <h2>系统初始化</h2>
+            <p style="text-align: center; color: #666; margin-bottom: 1.5rem;">首次使用，请设置管理员账户</p>
+            <form id="init-form">
+                <div class="form-group">
+                    <label for="init-username">管理员用户名:</label>
+                    <input type="text" id="init-username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="init-password">管理员密码:</label>
+                    <input type="password" id="init-password" name="password" required>
+                </div>
+                <div class="form-group">
+                    <label for="init-email">管理员邮箱 (可选):</label>
+                    <input type="email" id="init-email" name="email">
+                </div>
+                <button type="submit" class="btn btn-primary">初始化系统</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 登录界面 -->
+    <div id="login-container" class="login-container">
+        <div class="login-form">
+            <h2>Jenkins定时任务管理</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="username">用户名:</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">密码:</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit" class="btn btn-primary">登录</button>
+            </form>
+            <!-- <div class="login-info">
+                <p>默认管理员账号: admin / admin123</p>
+            </div> -->
+        </div>
+    </div>
+
+    <!-- 主应用界面 -->
+    <div id="app-container" style="display: none;">
+        <header>
+            <h1>Jenkins定时任务管理</h1>
+            <div class="user-info">
+                <span id="user-display">欢迎, </span>
+                <button id="logout-btn" class="btn btn-secondary">退出登录</button>
+            </div>
+            <nav class="tab-nav">
+                <button class="tab-btn active" data-tab="dashboard">控制台</button>
+                <button class="tab-btn" data-tab="jenkins-config">Jenkins配置</button>
+                <button class="tab-btn" data-tab="job-list">任务管理</button>
+            </nav>
+        </header>
+
+    <div class="container">
+        <main class="main-content">
+            <!-- 控制台 -->
+            <section id="dashboard" class="tab-content active">
+                <div class="section-header">
+                    <h2>系统概览</h2>
+                </div>
+                
+                <div class="dashboard-stats">
+                    <div class="stat-card">
+                        <h3>任务总数</h3>
+                        <p id="total-jobs">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>活跃任务</h3>
+                        <p id="active-jobs">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Jenkins配置</h3>
+                        <p id="jenkins-configs">0</p>
+                    </div>
+                </div>
+                
+                <div class="recent-activity">
+                    <h3>最近执行</h3>
+                    <div id="activity-list">
+                        <p>暂无执行记录</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Jenkins配置 -->
+            <section id="jenkins-config" class="tab-content">
+                <div class="section-header">
+                    <h2>Jenkins配置管理</h2>
+                    <button class="btn btn-primary" onclick="openJenkinsModal()">添加Jenkins配置</button>
+                </div>
+                
+                <div class="config-list">
+                    <table class="config-table">
+                        <thead>
+                            <tr>
+                                <th>配置名称</th>
+                                <th>Jenkins URL</th>
+                                <th>用户名</th>
+                                <th>创建时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="config-table-body">
+                            <!-- 动态加载配置列表 -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 任务列表 -->
+            <section id="job-list" class="tab-content">
+                <div class="section-header">
+                    <h2>定时任务列表</h2>
+                    <div>
+                        <button class="btn btn-secondary" onclick="refreshJobList()">刷新</button>
+                        <button class="btn btn-primary" onclick="openCreateJobModal()">创建任务</button>
+                    </div>
+                </div>
+                
+                <div class="job-list-container">
+                    <table class="job-table" id="job-table">
+                        <thead>
+                            <tr>
+                                <th>任务名称</th>
+                                <th>Jenkins配置</th>
+                                <th>Jenkins任务</th>
+                                <th>执行方式</th>
+                                <th>下次执行</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="job-table-body">
+                            <!-- 动态加载任务列表 -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 添加Jenkins配置模态框 -->
+    <div id="jenkins-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>添加Jenkins配置</h3>
+                <span class="close" onclick="closeJenkinsModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="jenkins-config-form" class="job-form">
+                    <div class="form-group">
+                        <label for="jenkins-name">配置名称</label>
+                        <input type="text" id="jenkins-name" name="name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="jenkins-url">Jenkins URL</label>
+                        <input type="url" id="jenkins-url" name="url" placeholder="http://jenkins.example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="jenkins-username">用户名</label>
+                        <input type="text" id="jenkins-username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="jenkins-token">API Token</label>
+                        <input type="password" id="jenkins-token" name="token" required>
+                        <small class="form-help">在Jenkins用户设置中生成API Token</small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">添加配置</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeJenkinsModal()">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 创建任务模态框 -->
+    <div id="create-job-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="create-job-modal-title">创建定时任务</h3>
+                <span class="close" onclick="closeCreateJobModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="create-job-form" class="job-form">
+                    <div class="form-group">
+                        <label for="job-name-modal">任务名称</label>
+                        <input type="text" id="job-name-modal" name="name" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="jenkins-config-select-modal">Jenkins配置</label>
+                        <select id="jenkins-config-select-modal" name="jenkins_config_id" required>
+                            <option value="">请选择Jenkins配置</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="jenkins-job-select-modal">Jenkins任务</label>
+                        <select id="jenkins-job-select-modal" name="jenkins_job_name" required>
+                            <option value="">请先选择Jenkins配置</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>执行方式</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="execution_type" value="once" checked>
+                                一次性执行
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="execution_type" value="recurring">
+                                周期性执行
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" id="execute-time-group-modal">
+                        <label for="execute-time-modal">执行时间</label>
+                        <input type="datetime-local" id="execute-time-modal" name="execute_time">
+                    </div>
+                    
+                    <div class="form-group" id="cron-expression-group-modal" style="display: none;">
+                        <label for="cron-expression-modal">Cron表达式</label>
+                        <input type="text" id="cron-expression-modal" name="cron_expression" placeholder="例如: 0 9 * * 1-5">
+                        <small class="form-help">格式: 分 时 日 月 周 (例如: 0 9 * * 1-5 表示工作日上午9点)</small>
+                    </div>
+                    
+                    <div id="job-parameters-modal" class="parameters-section">
+                        <h3>任务参数</h3>
+                        <div id="parameters-container-modal">
+                            <!-- 动态加载任务参数 -->
+                        </div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="submit-btn-modal">创建任务</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeCreateJobModal()">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑任务模态框 -->
+    <div id="edit-job-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>编辑定时任务</h3>
+                <span class="close" onclick="closeEditJobModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="edit-job-form" class="job-form">
+                    <input type="hidden" id="edit-job-id" name="id">
+                    <div class="form-group">
+                        <label for="edit-job-name">任务名称</label>
+                        <input type="text" id="edit-job-name" name="name" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit-jenkins-config-select">Jenkins配置</label>
+                        <select id="edit-jenkins-config-select" name="jenkins_config_id" required>
+                            <option value="">请选择Jenkins配置</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit-jenkins-job-select">Jenkins任务</label>
+                        <select id="edit-jenkins-job-select" name="jenkins_job_name" required>
+                            <option value="">请先选择Jenkins配置</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>执行方式</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="execution_type" value="once" checked>
+                                一次性执行
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="execution_type" value="recurring">
+                                周期性执行
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" id="edit-execute-time-group">
+                        <label for="edit-execute-time">执行时间</label>
+                        <input type="datetime-local" id="edit-execute-time" name="execute_time">
+                    </div>
+                    
+                    <div class="form-group" id="edit-cron-expression-group" style="display: none;">
+                        <label for="edit-cron-expression">Cron表达式</label>
+                        <input type="text" id="edit-cron-expression" name="cron_expression" placeholder="例如: 0 9 * * 1-5">
+                        <small class="form-help">格式: 分 时 日 月 周 (例如: 0 9 * * 1-5 表示工作日上午9点)</small>
+                    </div>
+                    
+                    <div id="edit-job-parameters" class="parameters-section">
+                        <h3>任务参数</h3>
+                        <div id="edit-parameters-container">
+                            <!-- 动态加载任务参数 -->
+                        </div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">更新任务</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeEditJobModal()">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -206,82 +206,41 @@ class DatabaseManager {
 
 const dbManager = new DatabaseManager();
 
+// 应用启动初始化
+async function initializeApp() {
+    try {
+        // 连接数据库
+        await dbManager.connect();
+        
+        // 检查数据库是否已初始化
+        const isInitialized = await dbManager.isDatabaseInitialized();
+        
+        if (!isInitialized) {
+            console.log('检测到数据库未初始化，开始初始化...');
+            await dbManager.initializeDatabase();
+            console.log('数据库初始化完成');
+        } else {
+            console.log('数据库已初始化，跳过初始化步骤');
+        }
+        
+        // 创建定时任务管理器
+        cronManager = new CronJobManager();
+        
+        return true;
+    } catch (error) {
+        console.error('应用初始化失败:', error.message);
+        throw error;
+    }
+}
+
 // 中间件配置
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// 数据库初始化
-const db = new sqlite3.Database(config.dbPath, (err) => {
-    if (err) {
-        console.error('数据库连接失败:', err.message);
-    } else {
-        console.log('数据库连接成功');
-    }
-});
-
-// 创建数据表
-db.serialize(() => {
-    // Jenkins配置表
-    db.run(`CREATE TABLE IF NOT EXISTS jenkins_config (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        url TEXT NOT NULL,
-        username TEXT,
-        token TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-
-    // 定时任务表
-    db.run(`CREATE TABLE IF NOT EXISTS scheduled_jobs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        jenkins_config_id INTEGER,
-        jenkins_job_name TEXT NOT NULL,
-        cron_expression TEXT,
-        execute_once BOOLEAN DEFAULT 0,
-        execute_time DATETIME,
-        parameters TEXT,
-        status TEXT DEFAULT 'pending',
-        last_execution DATETIME,
-        next_execution DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (jenkins_config_id) REFERENCES jenkins_config (id)
-    )`);
-
-    // 执行历史表
-    db.run(`CREATE TABLE IF NOT EXISTS execution_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        job_id INTEGER,
-        jenkins_build_number INTEGER,
-        status TEXT,
-        start_time DATETIME,
-        end_time DATETIME,
-        log_output TEXT,
-        FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
-    )`);
-
-    // 用户表
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        email TEXT,
-        role TEXT DEFAULT 'user',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-
-    // 创建默认管理员用户
-    const defaultPassword = bcrypt.hashSync(config.adminPassword, 10);
-    db.run(`INSERT OR IGNORE INTO users (username, password_hash, email, role)
-            VALUES (?, ?, ?, ?)`,
-            [config.adminUsername, defaultPassword, config.adminEmail, 'admin']);
-});
-
 // JWT密钥
-const JWT_SECRET = config.jwtSecret;
+const JWT_SECRET = config.app.jwtSecret;
 
 // 认证中间件
 const authenticateToken = (req, res, next) => {
@@ -522,12 +481,9 @@ class CronJobManager {
     }
 
     async loadScheduledJobs() {
-        db.all("SELECT * FROM scheduled_jobs WHERE status = 'active' AND (execute_once = 0 OR execute_time > datetime('now'))", (err, rows) => {
-            if (err) {
-                console.error('加载定时任务失败:', err);
-                return;
-            }
-
+        try {
+            const rows = await dbManager.query("SELECT * FROM scheduled_jobs WHERE status = 'active' AND (execute_once = 0 OR execute_time > datetime('now'))");
+            
             rows.forEach(job => {
                 if (job.execute_once) {
                     this.scheduleOneTimeJob(job);
@@ -535,17 +491,19 @@ class CronJobManager {
                     this.scheduleCronJob(job);
                 }
             });
-        });
+        } catch (err) {
+            console.error('加载定时任务失败:', err);
+        }
     }
 
-    scheduleOneTimeJob(job) {
+    async scheduleOneTimeJob(job) {
         const executeTime = new Date(job.execute_time);
         const now = new Date();
         
         if (executeTime <= now) {
             // console.log(`任务 ${job.name} 的执行时间已过期 (执行时间: ${executeTime}, 当前时间: ${now})`);
             // 更新任务状态为过期
-            db.run("UPDATE scheduled_jobs SET status = 'expired' WHERE id = ?", [job.id]);
+            await dbManager.run("UPDATE scheduled_jobs SET status = 'expired' WHERE id = ?", [job.id]);
             return;
         }
 
@@ -577,12 +535,7 @@ class CronJobManager {
         
         try {
             // 获取Jenkins配置
-            const jenkinsConfig = await new Promise((resolve, reject) => {
-                db.get("SELECT * FROM jenkins_config WHERE id = ?", [job.jenkins_config_id], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
+            const jenkinsConfig = await dbManager.get("SELECT * FROM jenkins_config WHERE id = ?", [job.jenkins_config_id]);
 
             if (!jenkinsConfig) {
                 throw new Error('Jenkins配置不存在');
@@ -613,11 +566,11 @@ class CronJobManager {
             const buildLocation = await jenkins.triggerBuild(job.jenkins_job_name, parameters);
             
             // 记录执行历史
-            db.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
+            await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
                 [job.id, 'started', new Date().toISOString()]);
 
             // 更新任务状态
-            db.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
+            await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
                 [new Date().toISOString(), job.id]);
 
             // console.log(`任务 ${job.name} 执行成功, 构建位置: ${buildLocation}`);
@@ -627,7 +580,7 @@ class CronJobManager {
             console.error(`失败详情: ${error.stack}`);
             
             // 记录执行失败
-            db.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
+            await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
                 [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
         }
     }
@@ -645,7 +598,7 @@ class CronJobManager {
     }
 }
 
-const cronManager = new CronJobManager();
+let cronManager;
 
 // 初始化API路由
 app.get('/api/init/status', async (req, res) => {
@@ -1289,10 +1242,23 @@ app.get('/', (req, res) => {
 });
 
 // 启动服务器
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`服务器运行在端口 ${PORT}`);
-    cronManager.loadScheduledJobs();
-});
+async function startServer() {
+    try {
+        // 初始化应用
+        await initializeApp();
+        
+        // 启动服务器
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`服务器运行在端口 ${PORT}`);
+            cronManager.loadScheduledJobs();
+        });
+    } catch (error) {
+        console.error('服务器启动失败:', error.message);
+        process.exit(1);
+    }
+}
+
+startServer();
 
 // 优雅关闭
 process.on('SIGINT', () => {

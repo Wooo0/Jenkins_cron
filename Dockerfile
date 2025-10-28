@@ -1,25 +1,39 @@
-# 使用官方Node.js运行时作为基础镜像
+# 构建阶段
+FROM opsdy.cdou.edu.cn:32399/public/node:22-alpine AS builder
+
+# 设置工作目录
+WORKDIR /usr/src/app
+
+# 安装编译依赖
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    sqlite-dev \
+    libc6-compat
+
+# 复制package.json和package-lock.json
+COPY package*.json ./
+
+# 安装所有依赖（包括devDependencies用于构建）
+RUN npm ci
+
+# 运行时阶段
 FROM opsdy.cdou.edu.cn:32399/public/node:22-alpine
 
 # 设置工作目录
 WORKDIR /usr/src/app
 
-# 安装编译依赖（sqlite3需要）
+# 安装运行时依赖
 RUN apk add --no-cache \
-    python3 \
-    make \
-    g++ \
     sqlite \
-    sqlite-dev
+    libc6-compat
 
-# 复制package.json和package-lock.json（如果存在）
+# 从构建阶段复制node_modules
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+
+# 复制package.json（运行时需要）
 COPY package*.json ./
-
-# 安装依赖
-RUN npm ci --omit=dev
-
-# 清理构建依赖以减小镜像大小
-RUN apk del make g++ python3
 
 # 复制应用源代码
 COPY . .

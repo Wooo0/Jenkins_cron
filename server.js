@@ -131,58 +131,113 @@ class DatabaseManager {
         try {
             console.log(`开始初始化${this.dbType.toUpperCase()}数据库...`);
             
-            // 创建数据表
-            const createTablesSQL = [
-                // Jenkins配置表
-                `CREATE TABLE IF NOT EXISTS jenkins_config (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    url TEXT NOT NULL,
-                    username TEXT,
-                    token TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )`,
-                
-                // 定时任务表
-                `CREATE TABLE IF NOT EXISTS scheduled_jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    jenkins_config_id INTEGER,
-                    jenkins_job_name TEXT NOT NULL,
-                    cron_expression TEXT,
-                    execute_once BOOLEAN DEFAULT 0,
-                    execute_time DATETIME,
-                    parameters TEXT,
-                    status TEXT DEFAULT 'pending',
-                    last_execution DATETIME,
-                    next_execution DATETIME,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (jenkins_config_id) REFERENCES jenkins_config (id)
-                )`,
-                
-                // 执行历史表
-                `CREATE TABLE IF NOT EXISTS execution_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id INTEGER,
-                    jenkins_build_number INTEGER,
-                    status TEXT,
-                    start_time DATETIME,
-                    end_time DATETIME,
-                    log_output TEXT,
-                    FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
-                )`,
-                
-                // 用户表
-                `CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    email TEXT,
-                    role TEXT DEFAULT 'user',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )`
-            ];
+            // 根据数据库类型生成不同的SQL语句
+            let createTablesSQL;
+            if (this.dbType === 'sqlite') {
+                createTablesSQL = [
+                    // Jenkins配置表
+                    `CREATE TABLE IF NOT EXISTS jenkins_config (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT UNIQUE NOT NULL,
+                        url TEXT NOT NULL,
+                        username TEXT,
+                        token TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`,
+                    
+                    // 定时任务表
+                    `CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        jenkins_config_id INTEGER,
+                        jenkins_job_name TEXT NOT NULL,
+                        cron_expression TEXT,
+                        execute_once BOOLEAN DEFAULT 0,
+                        execute_time DATETIME,
+                        parameters TEXT,
+                        status TEXT DEFAULT 'pending',
+                        last_execution DATETIME,
+                        next_execution DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (jenkins_config_id) REFERENCES jenkins_config (id)
+                    )`,
+                    
+                    // 执行历史表
+                    `CREATE TABLE IF NOT EXISTS execution_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id INTEGER,
+                        jenkins_build_number INTEGER,
+                        status TEXT,
+                        start_time DATETIME,
+                        end_time DATETIME,
+                        log_output TEXT,
+                        FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
+                    )`,
+                    
+                    // 用户表
+                    `CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        email TEXT,
+                        role TEXT DEFAULT 'user',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`
+                ];
+            } else if (this.dbType === 'mysql') {
+                createTablesSQL = [
+                    // Jenkins配置表
+                    `CREATE TABLE IF NOT EXISTS jenkins_config (
+                        id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                        name VARCHAR(255) UNIQUE NOT NULL,
+                        url TEXT NOT NULL,
+                        username VARCHAR(255),
+                        token TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`,
+                    
+                    // 定时任务表
+                    `CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                        id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                        name VARCHAR(255) NOT NULL,
+                        jenkins_config_id INTEGER,
+                        jenkins_job_name VARCHAR(255) NOT NULL,
+                        cron_expression VARCHAR(255),
+                        execute_once BOOLEAN DEFAULT 0,
+                        execute_time DATETIME,
+                        parameters TEXT,
+                        status VARCHAR(50) DEFAULT 'pending',
+                        last_execution DATETIME,
+                        next_execution DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (jenkins_config_id) REFERENCES jenkins_config (id)
+                    )`,
+                    
+                    // 执行历史表
+                    `CREATE TABLE IF NOT EXISTS execution_history (
+                        id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                        job_id INTEGER,
+                        jenkins_build_number INTEGER,
+                        status VARCHAR(50),
+                        start_time DATETIME,
+                        end_time DATETIME,
+                        log_output TEXT,
+                        FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
+                    )`,
+                    
+                    // 用户表
+                    `CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                        username VARCHAR(255) UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        email VARCHAR(255),
+                        role VARCHAR(50) DEFAULT 'user',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`
+                ];
+            }
 
             for (const sql of createTablesSQL) {
                 await this.run(sql);
@@ -482,7 +537,14 @@ class CronJobManager {
 
     async loadScheduledJobs() {
         try {
-            const rows = await dbManager.query("SELECT * FROM scheduled_jobs WHERE status = 'active' AND (execute_once = 0 OR execute_time > datetime('now'))");
+            let sql;
+            if (dbManager.dbType === 'sqlite') {
+                sql = "SELECT * FROM scheduled_jobs WHERE status = 'active' AND (execute_once = 0 OR execute_time > datetime('now'))";
+            } else if (dbManager.dbType === 'mysql') {
+                sql = "SELECT * FROM scheduled_jobs WHERE status = 'active' AND (execute_once = 0 OR execute_time > NOW())";
+            }
+            
+            const rows = await dbManager.query(sql);
             
             rows.forEach(job => {
                 if (job.execute_once) {
@@ -626,81 +688,17 @@ app.post('/api/init/setup', async (req, res) => {
             if (!adminUsername || !adminPassword) {
                 return res.status(400).json({ error: '管理员用户名和密码不能为空' });
             }
-            config.adminUsername = adminUsername;
-            config.adminPassword = adminPassword;
-            config.adminEmail = adminEmail || config.adminEmail;
+            config.admin.username = adminUsername;
+            config.admin.password = adminPassword;
+            config.admin.email = adminEmail || config.admin.email;
         }
         
-        // 创建数据库表
-        await new Promise((resolve, reject) => {
-            db.serialize(() => {
-                // Jenkins配置表
-                db.run(`CREATE TABLE IF NOT EXISTS jenkins_config (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    url TEXT NOT NULL,
-                    username TEXT,
-                    token TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )`);
-                
-                // 定时任务表
-                db.run(`CREATE TABLE IF NOT EXISTS scheduled_jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    jenkins_config_id INTEGER,
-                    jenkins_job_name TEXT NOT NULL,
-                    cron_expression TEXT,
-                    execute_once BOOLEAN DEFAULT 0,
-                    execute_time DATETIME,
-                    parameters TEXT,
-                    status TEXT DEFAULT 'pending',
-                    last_execution DATETIME,
-                    next_execution DATETIME,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (jenkins_config_id) REFERENCES jenkins_config (id)
-                )`);
-                
-                // 执行历史表
-                db.run(`CREATE TABLE IF NOT EXISTS execution_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id INTEGER,
-                    jenkins_build_number INTEGER,
-                    status TEXT,
-                    start_time DATETIME,
-                    end_time DATETIME,
-                    log_output TEXT,
-                    FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
-                )`);
-                
-                // 用户表
-                db.run(`CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    email TEXT,
-                    role TEXT DEFAULT 'user',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )`);
-                
-                // 创建管理员用户
-                const passwordHash = bcrypt.hashSync(config.adminPassword, 10);
-                db.run(`INSERT INTO users (username, password_hash, email, role)
-                        VALUES (?, ?, ?, ?)`,
-                        [config.adminUsername, passwordHash, config.adminEmail, 'admin'],
-                        function(err) {
-                            if (err) {
-                                reject(err);
-                            } else {
-                                resolve();
-                            }
-                        });
-            });
-        });
+        // 使用DatabaseManager进行数据库初始化
+        await dbManager.initializeDatabase();
         
-        res.json({ message: '系统初始化成功' });
+        res.json({ success: true, message: '系统初始化完成' });
     } catch (error) {
+        console.error('初始化失败:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -712,76 +710,12 @@ app.post('/api/init/auto-setup', async (req, res) => {
             return res.status(400).json({ error: '未配置环境变量，无法自动初始化' });
         }
         
-        // 创建数据库表
-        await new Promise((resolve, reject) => {
-            db.serialize(() => {
-                // Jenkins配置表
-                db.run(`CREATE TABLE IF NOT EXISTS jenkins_config (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    url TEXT NOT NULL,
-                    username TEXT,
-                    token TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )`);
-                
-                // 定时任务表
-                db.run(`CREATE TABLE IF NOT EXISTS scheduled_jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    jenkins_config_id INTEGER,
-                    jenkins_job_name TEXT NOT NULL,
-                    cron_expression TEXT,
-                    execute_once BOOLEAN DEFAULT 0,
-                    execute_time DATETIME,
-                    parameters TEXT,
-                    status TEXT DEFAULT 'pending',
-                    last_execution DATETIME,
-                    next_execution DATETIME,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (jenkins_config_id) REFERENCES jenkins_config (id)
-                )`);
-                
-                // 执行历史表
-                db.run(`CREATE TABLE IF NOT EXISTS execution_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id INTEGER,
-                    jenkins_build_number INTEGER,
-                    status TEXT,
-                    start_time DATETIME,
-                    end_time DATETIME,
-                    log_output TEXT,
-                    FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
-                )`);
-                
-                // 用户表
-                db.run(`CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    email TEXT,
-                    role TEXT DEFAULT 'user',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )`);
-                
-                // 创建管理员用户
-                const passwordHash = bcrypt.hashSync(config.adminPassword, 10);
-                db.run(`INSERT OR IGNORE INTO users (username, password_hash, email, role)
-                        VALUES (?, ?, ?, ?)`,
-                        [config.adminUsername, passwordHash, config.adminEmail, 'admin'],
-                        function(err) {
-                            if (err) {
-                                reject(err);
-                            } else {
-                                resolve();
-                            }
-                        });
-            });
-        });
+        // 使用DatabaseManager进行数据库初始化
+        await dbManager.initializeDatabase();
         
-        res.json({ message: '系统自动初始化成功' });
+        res.json({ success: true, message: '系统自动初始化完成' });
     } catch (error) {
+        console.error('自动初始化失败:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -789,17 +723,15 @@ app.post('/api/init/auto-setup', async (req, res) => {
 // API 路由
 
 // 用户登录
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-        return res.status(400).json({ error: '用户名和密码不能为空' });
-    }
-    
-    db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
-        if (err) {
-            return res.status(500).json({ error: '数据库查询失败' });
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+            return res.status(400).json({ error: '用户名和密码不能为空' });
         }
+        
+        const user = await dbManager.get("SELECT * FROM users WHERE username = ?", [username]);
         
         if (!user) {
             return res.status(401).json({ error: '用户名或密码错误' });
@@ -827,115 +759,112 @@ app.post('/api/login', (req, res) => {
                 role: user.role
             }
         });
-    });
+    } catch (error) {
+        console.error('登录失败:', error);
+        res.status(500).json({ error: '登录失败' });
+    }
 });
 
 // 获取当前用户信息
-app.get('/api/user', authenticateToken, (req, res) => {
-    db.get("SELECT id, username, email, role FROM users WHERE id = ?", [req.user.id], (err, user) => {
-        if (err) {
-            return res.status(500).json({ error: '数据库查询失败' });
-        }
+app.get('/api/user', authenticateToken, async (req, res) => {
+    try {
+        const user = await dbManager.get("SELECT id, username, email, role FROM users WHERE id = ?", [req.user.id]);
         
         if (!user) {
             return res.status(404).json({ error: '用户不存在' });
         }
         
         res.json(user);
-    });
+    } catch (error) {
+        console.error('获取用户信息失败:', error);
+        res.status(500).json({ error: '获取用户信息失败' });
+    }
 });
 
 // 获取所有Jenkins配置
-app.get('/api/jenkins-configs', authenticateToken, (req, res) => {
-    db.all("SELECT id, name, url, username FROM jenkins_config", (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+app.get('/api/jenkins-configs', authenticateToken, async (req, res) => {
+    try {
+        const rows = await dbManager.query("SELECT id, name, url, username FROM jenkins_config");
         res.json(rows);
-    });
+    } catch (error) {
+        console.error('获取Jenkins配置失败:', error);
+        res.status(500).json({ error: '获取Jenkins配置失败' });
+    }
 });
 
 // 添加Jenkins配置
-app.post('/api/jenkins-configs', authenticateToken, (req, res) => {
-    const { name, url, username, token } = req.body;
-    
-    db.run("INSERT INTO jenkins_config (name, url, username, token) VALUES (?, ?, ?, ?)",
-        [name, url, username, token], function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            res.json({ id: this.lastID, message: 'Jenkins配置添加成功' });
-        });
+app.post('/api/jenkins-configs', authenticateToken, async (req, res) => {
+    try {
+        const { name, url, username, token } = req.body;
         
-        // 删除Jenkins配置
-        app.delete('/api/jenkins-configs/:id', authenticateToken, (req, res) => {
-            const configId = req.params.id;
-            
-            // 检查是否有任务使用此配置
-            db.get("SELECT COUNT(*) as count FROM scheduled_jobs WHERE jenkins_config_id = ?", [configId], (err, row) => {
-                if (err) {
-                    res.status(500).json({ error: err.message });
-                    return;
-                }
-                
-                if (row.count > 0) {
-                    res.status(400).json({ error: '无法删除配置，有任务正在使用此配置' });
-                    return;
-                }
-                
-                db.run("DELETE FROM jenkins_config WHERE id = ?", [configId], function(err) {
-                    if (err) {
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-                    
-                    if (this.changes === 0) {
-                        res.status(404).json({ error: '配置不存在' });
-                        return;
-                    }
-                    
-                    res.json({ message: 'Jenkins配置删除成功' });
-                });
-            });
-        });
+        const result = await dbManager.run("INSERT INTO jenkins_config (name, url, username, token) VALUES (?, ?, ?, ?)",
+            [name, url, username, token]);
+        
+        res.json({ id: result.id, message: 'Jenkins配置添加成功' });
+    } catch (error) {
+        console.error('添加Jenkins配置失败:', error);
+        res.status(500).json({ error: '添加Jenkins配置失败' });
+    }
+});
+
+// 删除Jenkins配置
+app.delete('/api/jenkins-configs/:id', authenticateToken, async (req, res) => {
+    try {
+        const configId = req.params.id;
+        
+        // 检查是否有任务使用此配置
+        const row = await dbManager.get("SELECT COUNT(*) as count FROM scheduled_jobs WHERE jenkins_config_id = ?", [configId]);
+        
+        if (row.count > 0) {
+            return res.status(400).json({ error: '无法删除配置，有任务正在使用此配置' });
+        }
+        
+        const result = await dbManager.run("DELETE FROM jenkins_config WHERE id = ?", [configId]);
+        
+        if (result.changes === 0) {
+            return res.status(404).json({ error: '配置不存在' });
+        }
+        
+        res.json({ message: 'Jenkins配置删除成功' });
+    } catch (error) {
+        console.error('删除Jenkins配置失败:', error);
+        res.status(500).json({ error: '删除Jenkins配置失败' });
+    }
 });
 
 // 编辑定时任务
-app.put('/api/scheduled-jobs/:id', authenticateToken, (req, res) => {
-    const jobId = req.params.id;
-    const { name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters } = req.body;
-    
-    // 确保参数被正确序列化为JSON字符串
-    const serializedParameters = typeof parameters === 'object' && parameters !== null 
-        ? JSON.stringify(parameters) 
-        : parameters || '{}';
-    
-    db.run("UPDATE scheduled_jobs SET name = ?, jenkins_config_id = ?, jenkins_job_name = ?, cron_expression = ?, execute_once = ?, execute_time = ?, parameters = ?, status = 'active' WHERE id = ?",
-        [name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, serializedParameters, jobId], function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            
-            // 重新加载任务
-            cronManager.stopJob(jobId);
-            db.get("SELECT * FROM scheduled_jobs WHERE id = ?", [jobId], (err, job) => {
-                if (err || !job) {
-                    res.status(500).json({ error: err ? err.message : '任务不存在' });
-                    return;
-                }
-                
-                if (job.execute_once) {
-                    cronManager.scheduleOneTimeJob(job);
-                } else if (job.cron_expression) {
-                    cronManager.scheduleCronJob(job);
-                }
-                
-                res.json({ message: '任务更新成功' });
-            });
-        });
+app.put('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {
+    try {
+        const jobId = req.params.id;
+        const { name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters } = req.body;
+        
+        // 确保参数被正确序列化为JSON字符串
+        const serializedParameters = typeof parameters === 'object' && parameters !== null
+            ? JSON.stringify(parameters)
+            : parameters || '{}';
+        
+        await dbManager.run("UPDATE scheduled_jobs SET name = ?, jenkins_config_id = ?, jenkins_job_name = ?, cron_expression = ?, execute_once = ?, execute_time = ?, parameters = ?, status = 'active' WHERE id = ?",
+            [name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, serializedParameters, jobId]);
+        
+        // 重新加载任务
+        cronManager.stopJob(jobId);
+        const job = await dbManager.get("SELECT * FROM scheduled_jobs WHERE id = ?", [jobId]);
+        
+        if (!job) {
+            return res.status(404).json({ error: '任务不存在' });
+        }
+        
+        if (job.execute_once) {
+            cronManager.scheduleOneTimeJob(job);
+        } else if (job.cron_expression) {
+            cronManager.scheduleCronJob(job);
+        }
+        
+        res.json({ message: '任务更新成功' });
+    } catch (error) {
+        console.error('编辑定时任务失败:', error);
+        res.status(500).json({ error: '编辑定时任务失败' });
+    }
 });
 
 // 获取Jenkins任务列表
@@ -1003,69 +932,65 @@ app.get('/api/jenkins/:configId/jobs/*', authenticateToken, async (req, res) => 
 });
 
 // 创建定时任务
-app.post('/api/scheduled-jobs', authenticateToken, (req, res) => {
-    const { name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters } = req.body;
-    
-    const sql = `INSERT INTO scheduled_jobs 
-        (name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters, status) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`;
-    
-    db.run(sql, [name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, JSON.stringify(parameters)], 
-        function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
+app.post('/api/scheduled-jobs', authenticateToken, async (req, res) => {
+    try {
+        const { name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters } = req.body;
+        
+        const sql = `INSERT INTO scheduled_jobs
+            (name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`;
+        
+        const result = await dbManager.run(sql, [name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, JSON.stringify(parameters)]);
+        
+        // 重新加载定时任务
+        const jobId = result.id;
+        const job = await dbManager.get("SELECT * FROM scheduled_jobs WHERE id = ?", [jobId]);
+        
+        if (job) {
+            if (job.execute_once) {
+                cronManager.scheduleOneTimeJob(job);
+            } else if (job.cron_expression) {
+                cronManager.scheduleCronJob(job);
             }
-            
-            // 重新加载定时任务
-            const jobId = this.lastID;
-            db.get("SELECT * FROM scheduled_jobs WHERE id = ?", [jobId], (err, job) => {
-                if (!err && job) {
-                    if (job.execute_once) {
-                        cronManager.scheduleOneTimeJob(job);
-                    } else if (job.cron_expression) {
-                        cronManager.scheduleCronJob(job);
-                    }
-                }
-            });
-            
-            res.json({ id: jobId, message: '定时任务创建成功' });
-        });
+        }
+        
+        res.json({ id: jobId, message: '定时任务创建成功' });
+    } catch (error) {
+        console.error('创建定时任务失败:', error);
+        res.status(500).json({ error: '创建定时任务失败' });
+    }
 });
 
 // 获取所有定时任务
-app.get('/api/scheduled-jobs', authenticateToken, (req, res) => {
-    const sql = `SELECT sj.*, jc.name as jenkins_config_name 
-                 FROM scheduled_jobs sj 
-                 LEFT JOIN jenkins_config jc ON sj.jenkins_config_id = jc.id 
-                 ORDER BY sj.created_at DESC`;
-    
-    db.all(sql, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+app.get('/api/scheduled-jobs', authenticateToken, async (req, res) => {
+    try {
+        const sql = `SELECT sj.*, jc.name as jenkins_config_name
+                     FROM scheduled_jobs sj
+                     LEFT JOIN jenkins_config jc ON sj.jenkins_config_id = jc.id
+                     ORDER BY sj.created_at DESC`;
+        
+        const rows = await dbManager.query(sql);
         res.json(rows);
-    });
+    } catch (error) {
+        console.error('获取定时任务失败:', error);
+        res.status(500).json({ error: '获取定时任务失败' });
+    }
 });
 
 // 获取单个定时任务详情
-app.get('/api/scheduled-jobs/:id', authenticateToken, (req, res) => {
-    const jobId = req.params.id;
-    
-    const sql = `SELECT sj.*, jc.name as jenkins_config_name 
-                 FROM scheduled_jobs sj 
-                 LEFT JOIN jenkins_config jc ON sj.jenkins_config_id = jc.id 
-                 WHERE sj.id = ?`;
-    
-    db.get(sql, [jobId], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+app.get('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {
+    try {
+        const jobId = req.params.id;
+        
+        const sql = `SELECT sj.*, jc.name as jenkins_config_name
+                     FROM scheduled_jobs sj
+                     LEFT JOIN jenkins_config jc ON sj.jenkins_config_id = jc.id
+                     WHERE sj.id = ?`;
+        
+        const row = await dbManager.get(sql, [jobId]);
+        
         if (!row) {
-            res.status(404).json({ error: '任务不存在' });
-            return;
+            return res.status(404).json({ error: '任务不存在' });
         }
         
         // 解析参数
@@ -1084,49 +1009,50 @@ app.get('/api/scheduled-jobs/:id', authenticateToken, (req, res) => {
         }
         
         res.json(row);
-    });
+    } catch (error) {
+        console.error('获取定时任务详情失败:', error);
+        res.status(500).json({ error: '获取定时任务详情失败' });
+    }
 });
 
 // 切换任务状态
-app.put('/api/scheduled-jobs/:id/status', authenticateToken, (req, res) => {
-    const jobId = req.params.id;
-    const { status } = req.body;
-    
-    if (!['active', 'inactive'].includes(status)) {
-        res.status(400).json({ error: '状态必须是 active 或 inactive' });
-        return;
-    }
-    
-    db.run("UPDATE scheduled_jobs SET status = ? WHERE id = ?", [status, jobId], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+app.put('/api/scheduled-jobs/:id/status', authenticateToken, async (req, res) => {
+    try {
+        const jobId = req.params.id;
+        const { status } = req.body;
+        
+        if (!['active', 'inactive'].includes(status)) {
+            return res.status(400).json({ error: '状态必须是 active 或 inactive' });
         }
         
-        if (this.changes === 0) {
-            res.status(404).json({ error: '任务不存在' });
-            return;
+        const result = await dbManager.run("UPDATE scheduled_jobs SET status = ? WHERE id = ?", [status, jobId]);
+        
+        if (result.changes === 0) {
+            return res.status(404).json({ error: '任务不存在' });
         }
         
         res.json({ message: '状态更新成功' });
-    });
+    } catch (error) {
+        console.error('切换任务状态失败:', error);
+        res.status(500).json({ error: '切换任务状态失败' });
+    }
 });
 
 // 删除定时任务
-app.delete('/api/scheduled-jobs/:id', authenticateToken, (req, res) => {
-    const jobId = req.params.id;
+app.delete('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {
+    try {
+        const jobId = req.params.id;
     
     // 停止定时任务
     cronManager.stopJob(parseInt(jobId));
     
     // 从数据库删除
-    db.run("DELETE FROM scheduled_jobs WHERE id = ?", [jobId], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+        await dbManager.run("DELETE FROM scheduled_jobs WHERE id = ?", [jobId]);
         res.json({ message: '定时任务删除成功' });
-    });
+    } catch (error) {
+        console.error('删除定时任务失败:', error);
+        res.status(500).json({ error: '删除定时任务失败' });
+    }
 });
 
 // 立即执行任务
@@ -1135,23 +1061,18 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
     
     try {
         // 获取任务信息
-        db.get(`
+        const job = await dbManager.get(`
             SELECT sj.*, jc.url as jenkins_url, jc.username as jenkins_username, jc.token as jenkins_token
             FROM scheduled_jobs sj
             JOIN jenkins_config jc ON sj.jenkins_config_id = jc.id
             WHERE sj.id = ?
-        `, [jobId], async (err, job) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            
-            if (!job) {
-                res.status(404).json({ error: '任务不存在' });
-                return;
-            }
-            
-            try {
+        `, [jobId]);
+        
+        if (!job) {
+            return res.status(404).json({ error: '任务不存在' });
+        }
+        
+        try {
                 // 创建Jenkins API实例
                 const jenkinsConfig = {
                     url: job.jenkins_url,
@@ -1181,11 +1102,11 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
                 const buildLocation = await jenkins.triggerBuild(job.jenkins_job_name, parameters);
                 
                 // 记录执行历史
-                db.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
+                await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
                     [job.id, 'started', new Date().toISOString()]);
 
                 // 更新任务状态
-                db.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
+                await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
                     [new Date().toISOString(), job.id]);
                 
                 res.json({ message: '任务已成功提交执行', buildLocation });
@@ -1194,46 +1115,49 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
                 console.error(`失败详情: ${error.stack}`);
                 
                 // 记录执行失败
-                db.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
+                await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
                     [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
                 
                 res.status(500).json({ error: '任务执行失败: ' + error.message });
             }
-        });
+        } catch (error) {
+            console.error('立即执行任务失败:', error);
+            res.status(500).json({ error: '立即执行任务失败' });
+        }
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('获取任务信息失败:', error);
+        res.status(500).json({ error: '获取任务信息失败' });
     }
 });
 
 // 获取执行历史
-app.get('/api/execution-history', authenticateToken, (req, res) => {
-    const sql = `SELECT eh.*, sj.name as job_name 
-                 FROM execution_history eh 
-                 LEFT JOIN scheduled_jobs sj ON eh.job_id = sj.id 
-                 ORDER BY eh.start_time DESC 
-                 LIMIT 10`;
-    
-    db.all(sql, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+app.get('/api/execution-history', authenticateToken, async (req, res) => {
+    try {
+        const sql = `SELECT eh.*, sj.name as job_name
+                     FROM execution_history eh
+                     LEFT JOIN scheduled_jobs sj ON eh.job_id = sj.id
+                     ORDER BY eh.start_time DESC
+                     LIMIT 10`;
+        
+        const rows = await dbManager.query(sql);
         res.json(rows);
-    });
+    } catch (error) {
+        console.error('获取执行历史失败:', error);
+        res.status(500).json({ error: '获取执行历史失败' });
+    }
 });
 
 // 获取执行历史（按任务ID）
-app.get('/api/execution-history/:jobId', authenticateToken, (req, res) => {
-    const jobId = req.params.jobId;
-    
-    db.all("SELECT * FROM execution_history WHERE job_id = ? ORDER BY start_time DESC", 
-        [jobId], (err, rows) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            res.json(rows);
-        });
+app.get('/api/execution-history/:jobId', authenticateToken, async (req, res) => {
+    try {
+        const jobId = req.params.jobId;
+        
+        const rows = await dbManager.query("SELECT * FROM execution_history WHERE job_id = ? ORDER BY start_time DESC", [jobId]);
+        res.json(rows);
+    } catch (error) {
+        console.error('获取任务执行历史失败:', error);
+        res.status(500).json({ error: '获取任务执行历史失败' });
+    }
 });
 
 // 主页路由

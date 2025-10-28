@@ -1065,9 +1065,8 @@ async function initApp() {
 
 async function init() {
     try {
-        // 初始化表单
+        // 初始化表单 - 只调用initForms，initModalForms已经在initApp中调用
         initForms();
-        initModalForms();
         
         // 初始化标签页
         initTabs();
@@ -1091,6 +1090,13 @@ function openCreateJobModal() {
     document.getElementById('create-job-form').reset();
     document.getElementById('parameters-container-modal').innerHTML = '';
     document.getElementById('jenkins-job-select-modal').innerHTML = '<option value="">请先选择Jenkins配置</option>';
+    
+    // 重置提交按钮状态
+    const submitBtn = document.querySelector('#create-job-form button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '创建任务';
+    }
     
     // 设置执行类型切换功能
     setupExecutionTypeToggleModal();
@@ -1460,33 +1466,54 @@ function initModalForms() {
     document.getElementById('create-job-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        
+        // 防抖机制：如果按钮已禁用，说明正在提交中，直接返回
+        if (submitBtn.disabled) {
+            return;
+        }
+        
+        // 禁用提交按钮，防止重复提交
+        submitBtn.disabled = true;
+        submitBtn.textContent = '创建中...';
+        
         const formData = new FormData(e.target);
         const data = Object.fromEntries(formData);
         
         // 表单验证
         if (!data.name || !data.name.trim()) {
             showNotification('请输入任务名称', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
             return;
         }
         
         if (!data.jenkins_config_id) {
             showNotification('请选择Jenkins配置', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
             return;
         }
         
         if (!data.jenkins_job_name) {
             showNotification('请选择Jenkins任务', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
             return;
         }
         
         // 验证执行方式
         if (data.execution_type === 'once' && !data.execute_time) {
             showNotification('请设置执行时间', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
             return;
         }
         
         if (data.execution_type === 'recurring' && !data.cron_expression) {
             showNotification('请输入Cron表达式', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
             return;
         }
         
@@ -1519,12 +1546,27 @@ function initModalForms() {
             loadJobList(); // 刷新任务列表
         } catch (error) {
             showNotification('创建失败: ' + error.message, 'error');
+        } finally {
+            // 无论成功或失败，都重新启用提交按钮
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
         }
     });
     
     // 编辑任务表单
     document.getElementById('edit-job-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+        
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        
+        // 防抖机制：如果按钮已禁用，说明正在提交中，直接返回
+        if (submitBtn.disabled) {
+            return;
+        }
+        
+        // 禁用提交按钮，防止重复提交
+        submitBtn.disabled = true;
+        submitBtn.textContent = '更新中...';
         
         const formData = new FormData(e.target);
         const jobId = formData.get('id');
@@ -1533,27 +1575,37 @@ function initModalForms() {
         // 表单验证
         if (!data.name || !data.name.trim()) {
             showNotification('请输入任务名称', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
             return;
         }
         
         if (!data.jenkins_config_id) {
             showNotification('请选择Jenkins配置', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
             return;
         }
         
         if (!data.jenkins_job_name) {
             showNotification('请选择Jenkins任务', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
             return;
         }
         
         // 验证执行方式
         if (data.execution_type === 'once' && !data.execute_time) {
             showNotification('请设置执行时间', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
             return;
         }
         
         if (data.execution_type === 'recurring' && !data.cron_expression) {
             showNotification('请输入Cron表达式', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
             return;
         }
         
@@ -1587,6 +1639,10 @@ function initModalForms() {
             loadJobList(); // 刷新任务列表
         } catch (error) {
             showNotification('更新失败: ' + error.message, 'error');
+        } finally {
+            // 无论成功或失败，都重新启用提交按钮
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
         }
     });
     
@@ -1669,6 +1725,13 @@ async function openEditJobModal(jobId) {
             if (cronInput) {
                 cronInput.value = job.cron_expression;
             }
+        }
+        
+        // 重置提交按钮状态
+        const submitBtn = document.querySelector('#edit-job-form button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '更新任务';
         }
         
         // 显示模态框

@@ -4,11 +4,22 @@ FROM opsdy.cdou.edu.cn:32399/public/node:22-alpine
 # 设置工作目录
 WORKDIR /usr/src/app
 
+# 安装编译依赖（sqlite3需要）
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    sqlite \
+    sqlite-dev
+
 # 复制package.json和package-lock.json（如果存在）
 COPY package*.json ./
 
 # 安装依赖
-RUN npm ci --only=production
+RUN npm ci --omit=dev
+
+# 清理构建依赖以减小镜像大小
+RUN apk del make g++ python3
 
 # 复制应用源代码
 COPY . .

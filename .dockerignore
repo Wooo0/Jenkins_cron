@@ -10,3 +10,7 @@ coverage
 .vscode
 .DS_Store
 *.log
+*.db
+*.sqlite
+*.sqlite3
+cron_jenkins.db

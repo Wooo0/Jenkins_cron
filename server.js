@@ -873,12 +873,7 @@ app.get('/api/jenkins/:configId/jobs', authenticateToken, async (req, res) => {
     try {
         const configId = req.params.configId;
         
-        const config = await new Promise((resolve, reject) => {
-            db.get("SELECT * FROM jenkins_config WHERE id = ?", [configId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const config = await dbManager.get("SELECT * FROM jenkins_config WHERE id = ?", [configId]);
 
         if (!config) {
             return res.status(404).json({ error: 'Jenkins配置不存在' });
@@ -912,12 +907,7 @@ app.get('/api/jenkins/:configId/jobs/*', authenticateToken, async (req, res) => 
         // 移除末尾的 /parameters 获取真正的任务路径
         const jobName = decodeURIComponent(jobPath.replace('/parameters', ''));
         
-        const config = await new Promise((resolve, reject) => {
-            db.get("SELECT * FROM jenkins_config WHERE id = ?", [configId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const config = await dbManager.get("SELECT * FROM jenkins_config WHERE id = ?", [configId]);
 
         if (!config) {
             return res.status(404).json({ error: 'Jenkins配置不存在' });

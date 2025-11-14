@@ -32,7 +32,8 @@ USER nextjs
 
 # 环境变量默认值
 ENV PORT=3000
-ENV DB_TYPE=mysql
+ENV DB_TYPE=sqlite
+ENV DB_PATH=./cron_jenkins.db
 ENV DB_HOST=localhost
 ENV DB_PORT=3306
 ENV DB_NAME=cron_jenkins

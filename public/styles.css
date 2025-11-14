@@ -170,11 +170,11 @@ main {
 /* 任务表格列宽优化 */
 .job-table th:nth-child(1) { width: 15%; } /* 任务名称 */
 .job-table th:nth-child(2) { width: 15%; } /* Jenkins配置 */
-.job-table th:nth-child(3) { width: 20%; } /* Jenkins任务 */
+.job-table th:nth-child(3) { width: 25%; } /* Jenkins任务 */
 .job-table th:nth-child(4) { width: 10%; } /* 执行方式 */
 .job-table th:nth-child(5) { width: 15%; } /* 下次执行 */
 .job-table th:nth-child(6) { width: 10%; } /* 状态 */
-.job-table th:nth-child(7) { width: 15%; } /* 操作 */
+.job-table th:nth-child(7) { width: 10%; } /* 操作 */
 
 /* 操作按钮组 */
 .action-buttons {
@@ -897,8 +897,6 @@ main {
         margin: 1rem;
         padding: 1.5rem;
     }
-}
-    
     .action-buttons {
         flex-wrap: wrap;
         gap: 0.25rem;
@@ -958,3 +956,598 @@ main {
         text-align: center;
     }
 }
+
+/* 多任务选择器样式 */
+.multi-job-selector-container {
+    border: 1px solid #e1e5e9;
+    border-radius: 6px;
+    background: white;
+    overflow: hidden;
+}
+
+.job-selection-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e1e5e9;
+    gap: 1rem;
+}
+
+.search-control {
+    position: relative;
+    flex: 1;
+    max-width: 300px;
+}
+
+.search-input {
+    width: 100%;
+    padding: 0.5rem 2.5rem 0.5rem 1rem;
+    border: 1px solid #ced4da;
+    border-radius: 20px;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.search-icon {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #6c757d;
+    pointer-events: none;
+}
+
+.selection-info {
+    font-size: 0.875rem;
+    color: #6c757d;
+    white-space: nowrap;
+}
+
+.selected-count strong {
+    color: #667eea;
+}
+
+.jobs-list-container {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 0.5rem;
+}
+
+.job-item {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem;
+    border-bottom: 1px solid #f1f3f4;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    gap: 0.75rem;
+}
+
+.job-item:hover {
+    background: #f8f9fa;
+}
+
+.job-item.selected {
+    background: #e7f1ff;
+    border-left: 3px solid #667eea;
+}
+
+.job-item:last-child {
+    border-bottom: none;
+}
+
+.job-checkbox {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #ced4da;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.job-item.selected .job-checkbox {
+    background: #667eea;
+    border-color: #667eea;
+    position: relative;
+}
+
+.job-item.selected .job-checkbox::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 2px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.job-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.job-name {
+    font-weight: 500;
+    color: #2c3e50;
+    margin-bottom: 0.25rem;
+    word-break: break-word;
+}
+
+.job-details {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: #6c757d;
+    flex-wrap: wrap;
+}
+
+.job-type {
+    background: #e9ecef;
+    padding: 0.1rem 0.4rem;
+    border-radius: 10px;
+    font-size: 0.65rem;
+}
+
+.selected-jobs-preview {
+    border-top: 1px solid #e1e5e9;
+    padding: 0.75rem;
+    background: #f8f9fa;
+}
+
+.preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.preview-header h4 {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #495057;
+}
+
+.btn-clear {
+    background: none;
+    border: none;
+    color: #dc3545;
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.btn-clear:hover {
+    color: #c82333;
+}
+
+.selected-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.selected-tag {
+    display: flex;
+    align-items: center;
+    background: #667eea;
+    color: white;
+    padding: 0.2rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    gap: 0.5rem;
+}
+
+.tag-name {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tag-remove {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-size: 0.875rem;
+    line-height: 1;
+    padding: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tag-remove:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: #6c757d;
+    text-align: center;
+}
+
+.loading-state .spinner {
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 0.5rem;
+}
+
+.loading-state span {
+    font-size: 0.875rem;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+}
+
+.empty-state .empty-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.5;
+}
+
+/* 滚动条样式 */
+.jobs-list-container::-webkit-scrollbar {
+    width: 4px;
+}
+
+.jobs-list-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.jobs-list-container::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 2px;
+}
+
+.jobs-list-container::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .job-selection-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+    
+    .search-control {
+        max-width: none;
+    }
+    
+    .job-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    
+    .selected-tags {
+        justify-content: center;
+    }
+    
+    /* 任务名称显示样式 */
+    .job-names-display {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .job-count-badge {
+        background: #667eea;
+        color: white;
+        font-size: 0.7rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+}
+
+@media (max-width: 480px) {
+    .job-selection-controls {
+        padding: 0.5rem;
+    }
+    
+    .job-item {
+        padding: 0.5rem;
+    }
+    
+    .selected-jobs-preview {
+        padding: 0.5rem;
+    }
+    
+    .tag-name {
+        max-width: 100px;
+    }
+}
+
+/* 多任务参数显示样式 */
+.job-parameters-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.job-parameters-group {
+    border: 1px solid #e1e5e9;
+    border-radius: 8px;
+    overflow: hidden;
+    background: white;
+    min-width: 0; /* 防止内容溢出 */
+}
+
+.job-parameters-header {
+    background: #f8f9fa;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e1e5e9;
+}
+
+.job-parameters-header h4 {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #495057;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.job-parameters-content {
+    padding: 0.75rem;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.job-parameters-content .parameter-group {
+    margin-bottom: 0;
+}
+
+.job-parameters-content .parameter-group:last-child {
+    margin-bottom: 0;
+}
+
+.job-parameters-content .parameter-item {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #f1f3f4;
+}
+
+.job-parameters-content .parameter-item:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.job-parameters-content .parameter-label {
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 0.4rem;
+    display: block;
+    font-size: 0.8rem;
+}
+
+.job-parameters-content .parameter-input {
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    min-height: 32px;
+}
+
+.job-parameters-content .parameter-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.job-parameters-content .parameter-description {
+    font-size: 0.7rem;
+    color: #6c757d;
+    margin-top: 0.2rem;
+    line-height: 1.3;
+}
+
+.job-parameters-content select {
+    min-height: 32px;
+    font-size: 0.8rem;
+}
+
+.job-parameters-content textarea {
+    min-height: 60px;
+    resize: vertical;
+    font-size: 0.8rem;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .job-parameters-container {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+    
+    .job-parameters-content {
+        max-height: 200px;
+        padding: 0.5rem;
+    }
+    
+    .job-parameters-header {
+        padding: 0.5rem 0.75rem;
+    }
+    
+    .job-parameters-header h4 {
+        font-size: 0.85rem;
+    }
+}
+
+@media (min-width: 1200px) {
+    .job-parameters-container {
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    }
+}
+
+/* 错误状态样式 */
+.error-state {
+    text-align: center;
+    padding: 2rem;
+    color: #dc3545;
+}
+
+.error-state .error-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.7;
+}
+
+/* 无参数状态 */
+.no-parameters {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* 多任务标签样式 */
+.job-labels-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.job-label {
+    display: inline-block;
+    background: #e9ecef;
+    color: #495057;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: 1px solid #dee2e6;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 0 calc(50% - 0.25rem); /* 一行两个标签，考虑gap */
+    box-sizing: border-box;
+    text-align: center;
+}
+
+.job-label:hover {
+    background: #dee2e6;
+    border-color: #adb5bd;
+}
+
+.job-count-badge {
+    background: #667eea;
+    color: white;
+    padding: 0.125rem 0.375rem;
+    border-radius: 10px;
+    font-size: 0.625rem;
+    font-weight: 600;
+    margin-left: 0.25rem;
+    vertical-align: middle;
+}
+
+/* 任务名称显示优化 */
+.job-names-display {
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+}
+
+/* 任务标签工具提示样式 */
+.job-labels-container[data-tooltip="true"] {
+    position: relative;
+}
+
+.job-labels-container[data-tooltip="true"]:hover .job-tooltip {
+    display: block;
+}
+
+.job-tooltip {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #333;
+    color: white;
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    z-index: 1000;
+    min-width: 120px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    white-space: nowrap;
+}
+
+.job-tooltip div {
+    padding: 0.125rem 0;
+}
+
+.job-more-badge {
+    background: #6c757d;
+    color: white;
+    padding: 0.125rem 0.375rem;
+    border-radius: 10px;
+    font-size: 0.625rem;
+    font-weight: 600;
+    margin-left: 0.25rem;
+    vertical-align: middle;
+}
+
+/* 操作按钮组优化 - 一行显示4个按钮 */
+.action-buttons {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    max-width: 280px; /* 限制最大宽度 */
+}
+
+.action-buttons .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    min-width: auto;
+    flex: 0 0 calc(50% - 0.125rem); /* 一行两个按钮 */
+    box-sizing: border-box;
+    text-align: center;
+    margin-bottom: 0.25rem;
+}
+
+/* 调整任务表格列宽，为操作栏腾出更多空间 */
+.job-table th:nth-child(1) { width: 12%; } /* 任务名称 */
+.job-table th:nth-child(2) { width: 12%; } /* Jenkins配置 */
+.job-table th:nth-child(3) { width: 20%; } /* Jenkins任务 */
+.job-table th:nth-child(4) { width: 8%; }  /* 执行方式 */
+.job-table th:nth-child(5) { width: 12%; } /* 下次执行 */
+.job-table th:nth-child(6) { width: 8%; }  /* 状态 */
+.job-table th:nth-child(7) { width: 28%; } /* 操作 - 增加宽度 */

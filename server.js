@@ -26,37 +26,90 @@ class DatabaseManager {
     constructor() {
         this.db = null;
         this.dbType = config.database.type;
+        this.isConnected = false;
     }
 
     async connect() {
         try {
+            console.log(`正在连接数据库 - 类型: ${this.dbType}`);
+            
             switch (this.dbType) {
                 case 'sqlite':
+                    console.log(`SQLite数据库路径: ${config.database.sqlite.path}`);
                     this.db = new sqlite3.Database(config.database.sqlite.path);
                     console.log('SQLite数据库连接成功');
                     break;
                 case 'mysql':
+                    console.log(`MySQL连接参数 - 主机: ${config.database.mysql.host}, 端口: ${config.database.mysql.port}, 数据库: ${config.database.mysql.database}, 用户: ${config.database.mysql.username}`);
                     this.db = await mysql.createConnection({
                         host: config.database.mysql.host,
                         port: config.database.mysql.port,
                         database: config.database.mysql.database,
                         user: config.database.mysql.username,
                         password: config.database.mysql.password,
-                        charset: config.database.mysql.charset
+                        charset: config.database.mysql.charset,
+                        // 添加连接池和超时设置
+                        connectTimeout: 60000, // 连接超时60秒
+                        acquireTimeout: 60000, // 获取连接超时60秒
+                        timeout: 60000, // 查询超时60秒
+                        reconnect: true, // 启用自动重连
+                        // 连接池设置
+                        connectionLimit: 10,
+                        queueLimit: 0
                     });
                     console.log('MySQL数据库连接成功');
+                    this.isConnected = true;
                     break;
                 default:
                     throw new Error(`不支持的数据库类型: ${this.dbType}`);
             }
         } catch (error) {
             console.error('数据库连接失败:', error.message);
+            console.error('连接错误详情:', error.stack);
+            this.isConnected = false;
+            throw error;
+        }
+    }
+
+    /**
+     * 检查连接状态并在需要时重连
+     */
+    async ensureConnection() {
+        try {
+            if (!this.isConnected || !this.db) {
+                console.log('数据库连接已断开，正在重新连接...');
+                await this.connect();
+                return;
+            }
+
+            // 对于MySQL，检查连接是否仍然有效
+            if (this.dbType === 'mysql') {
+                try {
+                    // 检查连接是否处于关闭状态
+                    if (this.db._closing || this.db._closed) {
+                        console.log('MySQL连接已关闭，正在重新连接...');
+                        await this.connect();
+                        return;
+                    }
+                    
+                    // 执行简单查询测试连接
+                    await this.db.execute('SELECT 1');
+                } catch (error) {
+                    console.log(`MySQL连接测试失败: ${error.message}，正在重新连接...`);
+                    await this.connect();
+                }
+            }
+        } catch (error) {
+            console.error('确保数据库连接失败:', error.message);
             throw error;
         }
     }
 
     async query(sql, params = []) {
         try {
+            // 确保数据库连接有效
+            await this.ensureConnection();
+            
             if (this.dbType === 'sqlite') {
                 return new Promise((resolve, reject) => {
                     this.db.all(sql, params, (err, rows) => {
@@ -76,6 +129,9 @@ class DatabaseManager {
 
     async run(sql, params = []) {
         try {
+            // 确保数据库连接有效
+            await this.ensureConnection();
+            
             if (this.dbType === 'sqlite') {
                 return new Promise((resolve, reject) => {
                     this.db.run(sql, params, function(err) {
@@ -95,6 +151,9 @@ class DatabaseManager {
 
     async get(sql, params = []) {
         try {
+            // 确保数据库连接有效
+            await this.ensureConnection();
+            
             if (this.dbType === 'sqlite') {
                 return new Promise((resolve, reject) => {
                     this.db.get(sql, params, (err, row) => {
@@ -114,16 +173,57 @@ class DatabaseManager {
 
     async isDatabaseInitialized() {
         try {
+            console.log(`检查数据库初始化状态 - 数据库类型: ${this.dbType}`);
+            
             if (this.dbType === 'sqlite') {
                 const row = await this.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
+                console.log(`SQLite初始化检查结果: ${!!row}`);
                 return !!row;
             } else if (this.dbType === 'mysql') {
                 const rows = await this.query("SHOW TABLES LIKE 'users'");
+                console.log(`MySQL初始化检查结果: ${rows.length > 0}, 找到表数量: ${rows.length}`);
                 return rows.length > 0;
             }
             return false;
         } catch (error) {
             console.error('检查数据库初始化状态失败:', error.message);
+            console.error('错误详情:', error.stack);
+            return false;
+        }
+    }
+
+    /**
+     * 检查表是否存在特定字段
+     */
+    async hasColumn(tableName, columnName) {
+        try {
+            if (this.dbType === 'sqlite') {
+                const sql = `PRAGMA table_info(${tableName})`;
+                const columns = await this.query(sql);
+                return columns.some(col => col.name === columnName);
+            } else if (this.dbType === 'mysql') {
+                const sql = `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = ?`;
+                const rows = await this.query(sql, [tableName, columnName]);
+                return rows.length > 0;
+            }
+            return false;
+        } catch (error) {
+            console.error(`检查字段 ${columnName} 失败:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * 添加字段到表
+     */
+    async addColumn(tableName, columnName, columnType) {
+        try {
+            const sql = `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`;
+            await this.run(sql);
+            console.log(`成功添加字段 ${columnName} 到表 ${tableName}`);
+            return true;
+        } catch (error) {
+            console.error(`添加字段 ${columnName} 失败:`, error);
             return false;
         }
     }
@@ -151,7 +251,7 @@ class DatabaseManager {
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
                         jenkins_config_id INTEGER,
-                        jenkins_job_name TEXT NOT NULL,
+                        jenkins_jobs TEXT NOT NULL, -- 存储任务JSON数组，单任务: ["任务名"], 多任务: ["任务1", "任务2"]
                         cron_expression TEXT,
                         execute_once BOOLEAN DEFAULT 0,
                         execute_time DATETIME,
@@ -204,6 +304,7 @@ class DatabaseManager {
                         name VARCHAR(255) NOT NULL,
                         jenkins_config_id INTEGER,
                         jenkins_job_name VARCHAR(255) NOT NULL,
+                        jenkins_jobs TEXT, -- 存储多任务JSON数组
                         cron_expression VARCHAR(255),
                         execute_once BOOLEAN DEFAULT 0,
                         execute_time DATETIME,
@@ -252,10 +353,51 @@ class DatabaseManager {
             );
 
             console.log('数据库初始化完成');
+            
+            // 检查并添加缺失的字段
+            await this.migrateDatabase();
+            
             return true;
         } catch (error) {
             console.error('数据库初始化失败:', error.message);
             throw error;
+        }
+    }
+
+    /**
+     * 数据库迁移 - 添加新字段和数据迁移
+     */
+    async migrateDatabase() {
+        try {
+            console.log('开始数据库迁移检查...');
+            
+            // 检查 scheduled_jobs 表是否包含 jenkins_jobs 字段
+            const hasJenkinsJobsField = await this.hasColumn('scheduled_jobs', 'jenkins_jobs');
+            
+            if (!hasJenkinsJobsField) {
+                console.log('检测到缺少 jenkins_jobs 字段，正在添加...');
+                await this.addColumn('scheduled_jobs', 'jenkins_jobs', 'TEXT');
+                console.log('成功添加 jenkins_jobs 字段到 scheduled_jobs 表');
+                
+                // 迁移现有数据：将 jenkins_job_name 迁移到 jenkins_jobs
+                console.log('开始迁移现有任务数据...');
+                const jobs = await this.query("SELECT id, jenkins_job_name FROM scheduled_jobs WHERE jenkins_jobs IS NULL OR jenkins_jobs = ''");
+                for (const job of jobs) {
+                    if (job.jenkins_job_name) {
+                        const jenkinsJobsJson = JSON.stringify([job.jenkins_job_name]);
+                        await this.run("UPDATE scheduled_jobs SET jenkins_jobs = ? WHERE id = ?", [jenkinsJobsJson, job.id]);
+                        console.log(`迁移任务 ${job.id}: ${job.jenkins_job_name}`);
+                    }
+                }
+                console.log('现有任务数据迁移完成');
+            } else {
+                console.log('jenkins_jobs 字段已存在');
+            }
+            
+            console.log('数据库迁移检查完成');
+        } catch (error) {
+            console.error('数据库迁移失败:', error);
+            // 迁移失败不应该阻止应用启动
         }
     }
 }
@@ -265,11 +407,14 @@ const dbManager = new DatabaseManager();
 // 应用启动初始化
 async function initializeApp() {
     try {
+        console.log('开始应用初始化...');
+        
         // 连接数据库
         await dbManager.connect();
         
         // 检查数据库是否已初始化
         const isInitialized = await dbManager.isDatabaseInitialized();
+        console.log(`数据库初始化状态: ${isInitialized}`);
         
         if (!isInitialized) {
             console.log('检测到数据库未初始化，开始初始化...');
@@ -277,14 +422,19 @@ async function initializeApp() {
             console.log('数据库初始化完成');
         } else {
             console.log('数据库已初始化，跳过初始化步骤');
+            // 对于已初始化的数据库，仍然需要执行迁移检查
+            await dbManager.migrateDatabase();
         }
         
         // 创建定时任务管理器
         cronManager = new CronJobManager();
+        console.log('定时任务管理器创建完成');
         
+        console.log('应用初始化完成');
         return true;
     } catch (error) {
         console.error('应用初始化失败:', error.message);
+        console.error('初始化错误详情:', error.stack);
         throw error;
     }
 }
@@ -339,13 +489,13 @@ class JenkinsAPI {
                 jobPath = parts.map(part => encodeURIComponent(part)).join('/job/');
             } else {
                 // 单个任务名
-                jobPath = `job/${encodeURIComponent(jobName)}`;
+                jobPath = `${encodeURIComponent(jobName)}`;
             }
             
             const fullUrl = `${this.baseURL}/job/${jobPath}/api/json`;
-            // console.log(`尝试访问Jenkins URL: ${fullUrl}`);
-            // console.log(`原始jobName: ${jobName}`);
-            // console.log(`处理后jobPath: ${jobPath}`);
+            console.log(`尝试访问Jenkins URL: ${fullUrl}`);
+            console.log(`原始jobName: ${jobName}`);
+            console.log(`处理后jobPath: ${jobPath}`);
             
             const config = {};
             if (this.auth.username && this.auth.password) {
@@ -399,19 +549,21 @@ class JenkinsAPI {
 
     async triggerBuild(jobName, parameters = {}) {
         try {
-            // 处理文件夹路径的任务名
+            // 处理文件夹路径的任务名 - 与getJobConfig保持一致
             let jobPath;
             if (jobName.includes('/job/')) {
-                // 如果已经包含/job/，直接使用，但移除多余的斜杠
-                jobPath = jobName.replace(/\/+job\//g, '/job/').replace(/^\/+|\/+$/g, '');
+                // 如果已经包含/job/，直接使用
+                jobPath = jobName.split('/job/').map(part => encodeURIComponent(part)).join('/job/');
             } else if (jobName.includes('/')) {
                 // 如果包含斜杠但没有/job/，需要在每个路径段前添加job/
-                const parts = jobName.split('/').filter(part => part.trim() !== '');
-                jobPath = parts.map(part => `job/${part}`).join('/');
+                const parts = jobName.split('/');
+                jobPath = parts.map(part => encodeURIComponent(part)).join('/job/');
             } else {
                 // 单个任务名
-                jobPath = `job/${jobName}`;
+                jobPath = `job/${encodeURIComponent(jobName)}`;
             }
+            
+            console.log(`原始jobName: ${jobName}, 处理后jobPath: ${jobPath}`);
             
             // 确保baseURL不以斜杠结尾
             const baseURL = this.baseURL.replace(/\/+$/g, '');
@@ -605,38 +757,31 @@ class CronJobManager {
             }
 
             const jenkins = new JenkinsAPI(jenkinsConfig);
-            let parameters = {};
-            if (job.parameters) {
-                try {
-                    // 先检查parameters是否已经是对象
-                    if (typeof job.parameters === 'object' && !Array.isArray(job.parameters) && job.parameters !== null) {
-                        parameters = job.parameters;
-                    } else if (typeof job.parameters === 'string') {
-                        // 只有当parameters是字符串时才尝试解析
-                        parameters = JSON.parse(job.parameters);
-                    }
-                    // 如果parameters是其他类型（如数组等），保持parameters为{}
-                } catch (error) {
-                    console.error(`任务 ${job.name} 的参数解析失败: ${error.message}`);
-                    parameters = {};
-                }
-            }
             
-            console.log(`任务 ${job.name} 的Jenkins配置: ${JSON.stringify(jenkinsConfig)}`);
-            console.log(`任务 ${job.name} 的参数: ${JSON.stringify(parameters)}`);
-            
-            // 触发Jenkins构建
-            const buildLocation = await jenkins.triggerBuild(job.jenkins_job_name, parameters);
+            // 执行任务构建
+            const buildResults = await this.executeJobBuild(job, jenkins);
             
             // 记录执行历史
-            await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
+            console.log(`正在记录执行历史 - 任务ID: ${job.id}, 状态: started`);
+            const historyResult = await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
                 [job.id, 'started', new Date().toISOString()]);
+            console.log(`执行历史记录插入结果:`, historyResult);
 
             // 更新任务状态
             await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
                 [new Date().toISOString(), job.id]);
-
-            // console.log(`任务 ${job.name} 执行成功, 构建位置: ${buildLocation}`);
+            
+            // 统计执行结果
+            const successCount = buildResults.filter(r => r.status === 'success').length;
+            const failedCount = buildResults.filter(r => r.status === 'failed').length;
+            
+            if (successCount === buildResults.length) {
+                console.log(`任务 ${job.name} 所有${buildResults.length}个子任务执行成功`);
+            } else if (successCount > 0) {
+                console.log(`任务 ${job.name} 执行结果: ${successCount}个成功, ${failedCount}个失败`);
+            } else {
+                console.log(`任务 ${job.name} 所有${buildResults.length}个子任务执行失败`);
+            }
             
         } catch (error) {
             console.error(`任务 ${job.name} 执行失败:`, error.message);
@@ -646,6 +791,98 @@ class CronJobManager {
             await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
                 [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
         }
+    }
+
+    // 统一的执行任务构建逻辑
+    async executeJobBuild(job, jenkins) {
+        let parameters = {};
+        if (job.parameters) {
+            try {
+                // 先检查parameters是否已经是对象
+                if (typeof job.parameters === 'object' && !Array.isArray(job.parameters) && job.parameters !== null) {
+                    parameters = job.parameters;
+                } else if (typeof job.parameters === 'string') {
+                    // 只有当parameters是字符串时才尝试解析
+                    parameters = JSON.parse(job.parameters);
+                }
+                // 如果parameters是其他类型（如数组等），保持parameters为{}
+            } catch (error) {
+                console.error(`任务 ${job.name} 的参数解析失败: ${error.message}`);
+                parameters = {};
+            }
+        }
+        
+        console.log(`任务 ${job.name} 的Jenkins配置: ${JSON.stringify(jenkins)}`);
+        console.log(`任务 ${job.name} 的参数: ${JSON.stringify(parameters)}`);
+        
+        // 检查是否是多任务
+        let jobNames = [];
+        let jobParameters = {};
+        
+        if (job.parameters) {
+            try {
+                jobParameters = typeof job.parameters === 'string' ? JSON.parse(job.parameters) : job.parameters;
+            } catch (error) {
+                console.error(`任务 ${job.name} 的参数解析失败: ${error.message}`);
+                jobParameters = {};
+            }
+        }
+        
+        // 从 parameters 字段获取完整任务路径（键就是完整路径）
+        if (jobParameters && typeof jobParameters === 'object' && Object.keys(jobParameters).length > 0) {
+            jobNames = Object.keys(jobParameters);
+        } else {
+            // 回退到从 jenkins_jobs 字段获取（兼容旧数据）
+            if (job.jenkins_jobs) {
+                try {
+                    jobNames = typeof job.jenkins_jobs === 'string' ? JSON.parse(job.jenkins_jobs) : job.jenkins_jobs;
+                } catch (error) {
+                    console.error(`任务 ${job.name} 的任务列表解析失败: ${error.message}`);
+                    jobNames = [];
+                }
+            }
+        }
+        
+        if (jobNames.length === 0) {
+            throw new Error('任务列表为空');
+        }
+        
+        const buildResults = [];
+        
+        // 为每个任务触发Jenkins构建
+        for (const jobName of jobNames) {
+            try {
+                // 获取该任务的独立参数
+                let taskParameters = {};
+                if (typeof jobParameters === 'object' && jobParameters[jobName]) {
+                    // 新的 job_configs 格式
+                    taskParameters = jobParameters[jobName];
+                } else if (typeof jobParameters === 'object' && !Array.isArray(jobParameters)) {
+                    // 旧的 job_parameters 格式或单任务参数
+                    taskParameters = jobParameters;
+                } else {
+                    // 使用通用参数
+                    taskParameters = parameters;
+                }
+                
+                const buildLocation = await jenkins.triggerBuild(jobName, taskParameters);
+                buildResults.push({
+                    jobName: jobName,
+                    buildLocation: buildLocation,
+                    status: 'success'
+                });
+                console.log(`任务执行成功: ${jobName}`);
+            } catch (error) {
+                console.error(`任务执行失败: ${jobName}`, error);
+                buildResults.push({
+                    jobName: jobName,
+                    error: error.message,
+                    status: 'failed'
+                });
+            }
+        }
+        
+        return buildResults;
     }
 
     stopJob(jobId) {
@@ -837,15 +1074,36 @@ app.delete('/api/jenkins-configs/:id', authenticateToken, async (req, res) => {
 app.put('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {
     try {
         const jobId = req.params.id;
-        const { name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters } = req.body;
+        const { name, jenkins_config_id, cron_expression, execute_once, execute_time, job_configs } = req.body;
         
-        // 确保参数被正确序列化为JSON字符串
-        const serializedParameters = typeof parameters === 'object' && parameters !== null
-            ? JSON.stringify(parameters)
-            : parameters || '{}';
+        console.log('编辑任务请求数据:', req.body);
         
-        await dbManager.run("UPDATE scheduled_jobs SET name = ?, jenkins_config_id = ?, jenkins_job_name = ?, cron_expression = ?, execute_once = ?, execute_time = ?, parameters = ?, status = 'active' WHERE id = ?",
-            [name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, serializedParameters, jobId]);
+        // 处理多任务和单任务的参数存储
+        let serializedParameters;
+        let jenkins_jobs_json;
+        
+        if (job_configs && typeof job_configs === 'object' && Object.keys(job_configs).length > 0) {
+            // 多任务模式 - 使用统一的任务配置对象（单任务也是只有一个任务的多任务）
+            const jobNames = Object.keys(job_configs);
+            
+            // 从完整路径中提取项目名存储到jenkins_jobs字段
+            const projectNames = jobNames.map(fullPath => {
+                if (fullPath.includes('/job/')) {
+                    // 提取 /job/ 后面的项目名
+                    return fullPath.split('/job/').pop();
+                }
+                return fullPath;
+            });
+            jenkins_jobs_json = JSON.stringify(projectNames);
+            
+            // job_configs 直接就是参数对象，不需要再提取
+            serializedParameters = JSON.stringify(job_configs);
+        } else {
+            return res.status(400).json({ error: '请选择至少一个Jenkins任务' });
+        }
+        
+        await dbManager.run("UPDATE scheduled_jobs SET name = ?, jenkins_config_id = ?, jenkins_jobs = ?, cron_expression = ?, execute_once = ?, execute_time = ?, parameters = ?, status = 'active' WHERE id = ?",
+            [name, jenkins_config_id, jenkins_jobs_json, cron_expression, execute_once, execute_time, serializedParameters, jobId]);
         
         // 重新加载任务
         cronManager.stopJob(jobId);
@@ -925,13 +1183,40 @@ app.get('/api/jenkins/:configId/jobs/*', authenticateToken, async (req, res) => 
 // 创建定时任务
 app.post('/api/scheduled-jobs', authenticateToken, async (req, res) => {
     try {
-        const { name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters } = req.body;
+        const { name, jenkins_config_id, cron_expression, execute_once, execute_time, job_configs } = req.body;
+        
+        // 处理任务数据
+        let jenkins_jobs_json = null;
+        let serializedParameters;
+        
+        if (job_configs && typeof job_configs === 'object' && Object.keys(job_configs).length > 0) {
+            // 多任务模式 - 使用统一的任务配置对象
+            const jobNames = Object.keys(job_configs);
+            
+            // 从完整路径中提取项目名存储到jenkins_jobs字段
+            const projectNames = jobNames.map(fullPath => {
+                if (fullPath.includes('/job/')) {
+                    // 提取 /job/ 后面的项目名
+                    return fullPath.split('/job/').pop();
+                }
+                return fullPath;
+            });
+            jenkins_jobs_json = JSON.stringify(projectNames);
+            
+            // job_configs 直接就是参数对象，不需要再提取
+            serializedParameters = JSON.stringify(job_configs);
+        } else {
+            return res.status(400).json({ error: '请选择至少一个Jenkins任务' });
+        }
         
         const sql = `INSERT INTO scheduled_jobs
-            (name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, parameters, status)
+            (name, jenkins_config_id, jenkins_jobs, cron_expression, execute_once, execute_time, parameters, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`;
         
-        const result = await dbManager.run(sql, [name, jenkins_config_id, jenkins_job_name, cron_expression, execute_once, execute_time, JSON.stringify(parameters)]);
+        const result = await dbManager.run(sql, [
+            name, jenkins_config_id, jenkins_jobs_json,
+            cron_expression, execute_once, execute_time, serializedParameters
+        ]);
         
         // 重新加载定时任务
         const jobId = result.id;
@@ -961,7 +1246,40 @@ app.get('/api/scheduled-jobs', authenticateToken, async (req, res) => {
                      ORDER BY sj.created_at DESC`;
         
         const rows = await dbManager.query(sql);
-        res.json(rows);
+        
+        // 处理多任务数据
+        const processedRows = rows.map(row => {
+            let jenkins_jobs = [];
+            let parameters = row.parameters;
+            try {
+                if (row.jenkins_jobs) {
+                    // 先尝试直接解析
+                    jenkins_jobs = JSON.parse(row.jenkins_jobs);
+                }
+                if (row.parameters) {
+                    parameters = typeof row.parameters === 'string' ? row.parameters.replace(/\\\"/g, '"') : row.parameters;
+                }
+            } catch (error) {
+                console.error('解析多任务数据失败:', error);
+                // 如果直接解析失败，尝试清理转义符后再解析
+                try {
+                    if (row.jenkins_jobs) {
+                        const cleanedJobs = row.jenkins_jobs.replace(/\\\"/g, '"').replace(/\\\\/g, '\\');
+                        jenkins_jobs = JSON.parse(cleanedJobs);
+                    }
+                } catch (secondError) {
+                    console.error('二次解析多任务数据失败:', secondError);
+                    jenkins_jobs = [];
+                }
+            }
+            
+            return {
+                ...row,
+                jenkins_jobs: jenkins_jobs
+            };
+        });
+        
+        res.json(processedRows);
     } catch (error) {
         console.error('获取定时任务失败:', error);
         res.status(500).json({ error: '获取定时任务失败' });
@@ -984,6 +1302,27 @@ app.get('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ error: '任务不存在' });
         }
         
+        // 处理多任务数据
+        let jenkins_jobs = [];
+        try {
+            if (row.jenkins_jobs) {
+                // 先尝试直接解析
+                jenkins_jobs = JSON.parse(row.jenkins_jobs);
+            }
+        } catch (error) {
+            console.error('解析多任务数据失败:', error);
+            // 如果直接解析失败，尝试清理转义符后再解析
+            try {
+                if (row.jenkins_jobs) {
+                    const cleanedJobs = row.jenkins_jobs.replace(/\\\"/g, '"').replace(/\\\\/g, '\\');
+                    jenkins_jobs = JSON.parse(cleanedJobs);
+                }
+            } catch (secondError) {
+                console.error('二次解析多任务数据失败:', secondError);
+                jenkins_jobs = [];
+            }
+        }
+        
         // 解析参数
         if (row.parameters) {
             try {
@@ -999,7 +1338,12 @@ app.get('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {
             row.parameters = {};
         }
         
-        res.json(row);
+        const processedRow = {
+            ...row,
+            jenkins_jobs: jenkins_jobs
+        };
+        
+        res.json(processedRow);
     } catch (error) {
         console.error('获取定时任务详情失败:', error);
         res.status(500).json({ error: '获取定时任务详情失败' });
@@ -1064,52 +1408,58 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
         }
         
         try {
-                // 创建Jenkins API实例
-                const jenkinsConfig = {
-                    url: job.jenkins_url,
-                    username: job.jenkins_username,
-                    token: job.jenkins_token
-                };
-                
-                const jenkins = new JenkinsAPI(jenkinsConfig);
-                let parameters = {};
-                if (job.parameters) {
-                    try {
-                        // 先检查parameters是否已经是对象
-                        if (typeof job.parameters === 'object' && !Array.isArray(job.parameters) && job.parameters !== null) {
-                            parameters = job.parameters;
-                        } else if (typeof job.parameters === 'string') {
-                            // 只有当parameters是字符串时才尝试解析
-                            parameters = JSON.parse(job.parameters);
-                        }
-                        // 如果parameters是其他类型（如数组等），保持parameters为{}
-                    } catch (error) {
-                        console.error(`任务 ${job.name} 的参数解析失败: ${error.message}`);
-                        parameters = {};
-                    }
-                }
-                
-                // 触发Jenkins构建
-                const buildLocation = await jenkins.triggerBuild(job.jenkins_job_name, parameters);
-                
-                // 记录执行历史
-                await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
-                    [job.id, 'started', new Date().toISOString()]);
+            // 创建Jenkins API实例
+            const jenkinsConfig = {
+                url: job.jenkins_url,
+                username: job.jenkins_username,
+                token: job.jenkins_token
+            };
+            
+            const jenkins = new JenkinsAPI(jenkinsConfig);
+            
+            // 使用统一的执行函数
+            const buildResults = await cronManager.executeJobBuild(job, jenkins);
+            
+            // 记录执行历史
+            console.log(`立即执行任务 - 正在记录执行历史 - 任务ID: ${job.id}, 状态: started`);
+            const historyResult = await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
+                [job.id, 'started', new Date().toISOString()]);
+            console.log(`立即执行任务 - 执行历史记录插入结果:`, historyResult);
 
-                // 更新任务状态
-                await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
-                    [new Date().toISOString(), job.id]);
-                
-                res.json({ message: '任务已成功提交执行', buildLocation });
-            } catch (error) {
-                console.error(`立即执行任务 ${job.name} 执行失败:`, error.message);
-                console.error(`失败详情: ${error.stack}`);
-                
-                // 记录执行失败
-                await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
-                    [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
-                
-                res.status(500).json({ error: '任务执行失败: ' + error.message });
+            // 更新任务状态
+            await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
+                [new Date().toISOString(), job.id]);
+            
+            // 统计执行结果
+            const successCount = buildResults.filter(r => r.status === 'success').length;
+            const failedCount = buildResults.filter(r => r.status === 'failed').length;
+            const totalJobs = buildResults.length;
+            
+            let message = '';
+            if (successCount === totalJobs) {
+                message = `所有${totalJobs}个任务已成功提交执行`;
+            } else if (successCount > 0) {
+                message = `${successCount}个任务成功执行，${failedCount}个任务执行失败`;
+            } else {
+                message = `所有${totalJobs}个任务执行失败`;
+            }
+            
+            res.json({
+                message: message,
+                buildResults: buildResults,
+                totalJobs: totalJobs,
+                successCount: successCount,
+                failedCount: failedCount
+            });
+        } catch (error) {
+            console.error(`立即执行任务 ${job.name} 执行失败:`, error.message);
+            console.error(`失败详情: ${error.stack}`);
+            
+            // 记录执行失败
+            await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
+                [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
+            
+            res.status(500).json({ error: '任务执行失败: ' + error.message });
         }
     } catch (error) {
         console.error('获取任务信息失败:', error);
@@ -1174,6 +1524,8 @@ startServer();
 // 优雅关闭
 process.on('SIGINT', () => {
     // console.log('正在关闭服务器...');
-    db.close();
+    if (dbManager.db) {
+        dbManager.db.close();
+    }
     process.exit(0);
 });

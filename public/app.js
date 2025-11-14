@@ -12,6 +12,19 @@ const AppState = {
     token: localStorage.getItem('token')
 };
 
+// 参数状态管理 - 新增全局状态对象
+const JobParametersState = {
+    // 按模态框类型存储参数状态
+    create: {
+        parameters: [],
+        currentValues: {}
+    },
+    edit: {
+        parameters: [],
+        currentValues: {}
+    }
+};
+
 // API 工具类
 class API {
     static async request(url, options = {}) {
@@ -550,7 +563,9 @@ async function onJenkinsConfigChange(event) {
         jobSelect.innerHTML = '<option value="">请选择Jenkins任务</option>' +
             jobs.map(job => `<option value="${job.fullName || job.name}">${job.displayName || job.name}</option>`).join('');
         
-        // 监听Jenkins任务选择变化
+        // 移除旧的监听器，避免重复绑定
+        jobSelect.removeEventListener('change', onJenkinsJobChange);
+        // 重新绑定监听器
         jobSelect.addEventListener('change', onJenkinsJobChange);
         
     } catch (error) {
@@ -675,21 +690,43 @@ function renderGenericParameter(param) {
 }
 
 function setupExecutionTypeToggle() {
-    const radios = document.querySelectorAll('input[name="execution_type"]');
-    const executeTimeGroup = document.getElementById('execute-time-group');
-    const cronExpressionGroup = document.getElementById('cron-expression-group');
-    
-    radios.forEach(radio => {
-        radio.addEventListener('change', () => {
-            if (radio.value === 'once') {
-                executeTimeGroup.style.display = 'block';
-                cronExpressionGroup.style.display = 'none';
-            } else {
-                executeTimeGroup.style.display = 'none';
-                cronExpressionGroup.style.display = 'block';
-            }
+    // 为创建任务模态框设置执行类型切换
+    const createRadios = document.querySelectorAll('#create-job-modal input[name="execution_type"]');
+    const createExecuteTimeGroup = document.getElementById('execute-time-group-modal');
+    const createCronExpressionGroup = document.getElementById('cron-expression-group-modal');
+
+    if (createExecuteTimeGroup && createCronExpressionGroup) {
+        createRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'once') {
+                    createExecuteTimeGroup.style.display = 'block';
+                    createCronExpressionGroup.style.display = 'none';
+                } else if (this.value === 'recurring') {
+                    createExecuteTimeGroup.style.display = 'none';
+                    createCronExpressionGroup.style.display = 'block';
+                }
+            });
         });
-    });
+    }
+
+    // 为编辑任务模态框设置执行类型切换
+    const editRadios = document.querySelectorAll('#edit-job-modal input[name="execution_type"]');
+    const editExecuteTimeGroup = document.getElementById('edit-execute-time-group');
+    const editCronExpressionGroup = document.getElementById('edit-cron-expression-group');
+
+    if (editExecuteTimeGroup && editCronExpressionGroup) {
+        editRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'once') {
+                    editExecuteTimeGroup.style.display = 'block';
+                    editCronExpressionGroup.style.display = 'none';
+                } else if (this.value === 'recurring') {
+                    editExecuteTimeGroup.style.display = 'none';
+                    editCronExpressionGroup.style.display = 'block';
+                }
+            });
+        });
+    }
 }
 
 // 任务列表管理
@@ -705,11 +742,74 @@ async function loadJobList() {
             return;
         }
         
-        jobTableBody.innerHTML = jobs.map(job => `
+        // 预处理 jobs 数据，确保 jenkins_jobs 是一个解析后的数组
+        const processedJobs = jobs.map(job => {
+            // 如果 jenkins_jobs 不是数组，尝试处理
+            if (!Array.isArray(job.jenkins_jobs)) {
+                if (typeof job.jenkins_jobs === 'string') {
+                    try {
+                        // 后端已经处理过转义符，直接解析即可
+                        job.jenkins_jobs = JSON.parse(job.jenkins_jobs);
+                    } catch (e) {
+                        console.error('解析 jenkins_jobs 失败:', e);
+                        job.jenkins_jobs = []; // 解析失败则设置为空数组
+                    }
+                } else {
+                    job.jenkins_jobs = []; // 不是字符串也不是数组，设置为空数组
+                }
+            }
+            return job;
+        });
+
+        jobTableBody.innerHTML = processedJobs.map(job => {
+            // 处理多任务显示 - 使用jenkins_jobs中的项目名直接显示
+            let jobDisplay = '';
+            if (job.jenkins_jobs && Array.isArray(job.jenkins_jobs)) {
+                if (job.jenkins_jobs.length === 1) {
+                    // 单任务显示
+                    jobDisplay = `<span class="job-label">${job.jenkins_jobs[0]}</span>`;
+                } else {
+                    // 多任务显示 - 最多显示4个标签（2行），超出时鼠标悬浮显示
+                    const maxDisplay = 4;
+                    const displayJobs = job.jenkins_jobs.slice(0, maxDisplay);
+                    const remainingJobs = job.jenkins_jobs.slice(maxDisplay);
+                    
+                    const labels = displayJobs.map(name =>
+                        `<span class="job-label">${name}</span>`
+                    ).join('');
+                    
+                    let tooltipHtml = '';
+                    if (remainingJobs.length > 0) {
+                        tooltipHtml = `
+                            <div class="job-tooltip">
+                                ${remainingJobs.map(name => `<div>${name}</div>`).join('')}
+                            </div>
+                        `;
+                    }
+                    
+                    jobDisplay = `
+                        <div class="job-labels-container" ${remainingJobs.length > 0 ? 'data-tooltip="true"' : ''}>
+                            ${labels}
+                            ${remainingJobs.length > 0 ? `<span class="job-more-badge">+${remainingJobs.length}</span>` : ''}
+                            <span class="job-count-badge">${job.jenkins_jobs.length}</span>
+                            ${tooltipHtml}
+                        </div>
+                    `;
+                }
+            } else {
+                // 回退到旧格式显示
+                jobDisplay = job.jenkins_job_name || '未知任务';
+            }
+            
+            return `
             <tr>
                 <td>${job.name}</td>
                 <td>${job.jenkins_config_name || '未知'}</td>
-                <td>${job.jenkins_job_name}</td>
+                <td>
+                    <div class="job-names-display">
+                        ${jobDisplay}
+                    </div>
+                </td>
                 <td>${job.execute_once ? '一次性' : '周期性'}</td>
                 <td>${job.execute_once ? formatDateTime(job.execute_time) : job.cron_expression}</td>
                 <td>
@@ -726,7 +826,7 @@ async function loadJobList() {
                     </div>
                 </td>
             </tr>
-        `).join('');
+        `}).join('');
         
     } catch (error) {
         console.error('加载任务列表失败:', error);
@@ -787,22 +887,25 @@ function refreshJobList() {
 
 // 表单提交处理
 function initForms() {
-    // Jenkins配置表单
-    document.getElementById('jenkins-config-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const formData = new FormData(e.target);
-        const data = Object.fromEntries(formData);
-        
-        try {
-            await API.post('/api/jenkins-configs', data);
-            showNotification('Jenkins配置添加成功', 'success');
-            closeJenkinsModal();
-            loadJenkinsConfigs();
-        } catch (error) {
-            showNotification('添加失败: ' + error.message, 'error');
-        }
-    });
+    // Jenkins配置表单（仅在元素存在时添加）
+    const jenkinsConfigForm = document.getElementById('jenkins-config-form');
+    if (jenkinsConfigForm) {
+        jenkinsConfigForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const data = Object.fromEntries(formData);
+            
+            try {
+                await API.post('/api/jenkins-configs', data);
+                showNotification('Jenkins配置添加成功', 'success');
+                closeJenkinsModal();
+                loadJenkinsConfigs();
+            } catch (error) {
+                showNotification('添加失败: ' + error.message, 'error');
+            }
+        });
+    }
     
     // 设置执行类型切换功能
     setupExecutionTypeToggle();
@@ -875,6 +978,41 @@ function fillJobParametersModal(parameters) {
             } else {
                 input.value = parameters[key];
             }
+        }
+    });
+}
+
+// 填充多任务独立参数（模态框）
+function fillMultiJobParametersModal(jobParameters) {
+    console.log('填充多任务独立参数:', jobParameters);
+    
+    // 遍历每个任务的参数
+    Object.keys(jobParameters).forEach(jobName => {
+        const parameters = jobParameters[jobName];
+        if (parameters && typeof parameters === 'object') {
+            Object.keys(parameters).forEach(paramKey => {
+                // 查找对应任务的参数输入框 - 同时检查创建和编辑模态框
+                const input = document.querySelector(`#edit-job-form [name="param_${paramKey}"][data-job-name="${jobName}"]`) ||
+                              document.querySelector(`#create-job-form [name="param_${paramKey}"][data-job-name="${jobName}"]`);
+                if (input) {
+                    if (input.type === 'checkbox') {
+                        input.checked = parameters[paramKey] === 'true' || parameters[paramKey] === true;
+                    } else {
+                        input.value = parameters[paramKey];
+                    }
+                } else {
+                    // 如果没有找到带任务名的输入框，尝试查找通用的输入框（向后兼容）
+                    const genericInput = document.querySelector(`#edit-job-form [name="param_${paramKey}"]`) ||
+                                         document.querySelector(`#create-job-form [name="param_${paramKey}"]`);
+                    if (genericInput && !genericInput.hasAttribute('data-job-name')) {
+                        if (genericInput.type === 'checkbox') {
+                            genericInput.checked = parameters[paramKey] === 'true' || parameters[paramKey] === true;
+                        } else {
+                            genericInput.value = parameters[paramKey];
+                        }
+                    }
+                }
+            });
         }
     });
 }
@@ -1089,7 +1227,16 @@ function openCreateJobModal() {
     // 重置表单
     document.getElementById('create-job-form').reset();
     document.getElementById('parameters-container-modal').innerHTML = '';
-    document.getElementById('jenkins-job-select-modal').innerHTML = '<option value="">请先选择Jenkins配置</option>';
+    
+    // 清空多任务选择
+    selectedJobs.create.clear();
+    updateSelectedJobsPreview();
+    clearJobsList();
+    
+    // 重置参数状态
+    AppState.jobParameters = [];
+    JobParametersState.create.parameters = [];
+    JobParametersState.create.currentValues = {};
     
     // 重置提交按钮状态
     const submitBtn = document.querySelector('#create-job-form button[type="submit"]');
@@ -1106,16 +1253,38 @@ function openCreateJobModal() {
     
     // 显示模态框
     document.getElementById('create-job-modal').style.display = 'block';
+    
+    console.log('创建任务模态框已打开，参数状态已重置');
 }
 
 // 关闭创建任务弹窗
 function closeCreateJobModal() {
     document.getElementById('create-job-modal').style.display = 'none';
+    
+    // 清理创建任务模态框的状态
+    selectedJobs.create.clear();
+    AppState.jobParameters = [];
+    JobParametersState.create.parameters = [];
+    JobParametersState.create.currentValues = {};
+    document.getElementById('parameters-container-modal').innerHTML = '';
+    document.getElementById('create-job-form').reset();
+    
+    console.log('创建任务模态框已关闭，状态已清理');
 }
 
 // 关闭编辑任务弹窗
 function closeEditJobModal() {
     document.getElementById('edit-job-modal').style.display = 'none';
+    
+    // 清理编辑任务模态框的状态
+    selectedJobs.edit.clear();
+    AppState.jobParameters = [];
+    JobParametersState.edit.parameters = [];
+    JobParametersState.edit.currentValues = {};
+    document.getElementById('edit-parameters-container').innerHTML = '';
+    document.getElementById('edit-job-form').reset();
+    
+    console.log('编辑任务模态框已关闭，状态已清理');
 }
 
 // 设置模态框中的执行类型切换功能
@@ -1184,47 +1353,66 @@ async function loadJenkinsConfigsForSelectModal() {
 // 模态框中Jenkins配置变化处理
 async function onJenkinsConfigChangeModal(event) {
     const configId = event.target.value;
-    const jobSelectModal = document.getElementById('jenkins-job-select-modal');
-    const editJobSelect = document.getElementById('edit-jenkins-job-select');
     
     if (!configId) {
-        if (event.target.closest('#create-job-modal') && jobSelectModal) {
-            jobSelectModal.innerHTML = '<option value="">请先选择Jenkins配置</option>';
-        } else if (event.target.closest('#edit-job-form') && editJobSelect) {
-            editJobSelect.innerHTML = '<option value="">请先选择Jenkins配置</option>';
+        if (event.target.closest('#create-job-modal')) {
+            clearJobsList();
+        } else if (event.target.closest('#edit-job-form')) {
+            // 编辑模式的处理保持不变
+            const editJobsContainer = document.getElementById('edit-jobs-list-container');
+            if (editJobsContainer) {
+                editJobsContainer.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📋</div>
+                        <p>请先选择Jenkins配置</p>
+                    </div>
+                `;
+            }
         }
         return;
     }
     
     try {
-        // 显示加载状态
-        if (event.target.closest('#create-job-modal') && jobSelectModal) {
-            jobSelectModal.innerHTML = '<option value="">加载中...</option>';
-        } else if (event.target.closest('#edit-job-form') && editJobSelect) {
-            editJobSelect.innerHTML = '<option value="">加载中...</option>';
-        }
+        let jobs = [];
         
-        const jobs = await API.get(`/api/jenkins/${configId}/jobs`);
-        
-        if (jobs.length === 0) {
-            const options = '<option value="">该Jenkins实例没有任务</option>';
-            if (event.target.closest('#create-job-modal') && jobSelectModal) {
-                jobSelectModal.innerHTML = options;
-            } else if (event.target.closest('#edit-job-form') && editJobSelect) {
-                editJobSelect.innerHTML = options;
+        if (event.target.closest('#create-job-modal')) {
+            // 创建任务模态框 - 加载多任务列表
+            showJobsLoading();
+            jobs = await API.get(`/api/jenkins/${configId}/jobs`);
+            renderJobsList(jobs);
+            // 绑定搜索功能
+            bindSearchFunctionality(jobs);
+        } else if (event.target.closest('#edit-job-form')) {
+            // 编辑任务模态框 - 使用多任务选择器
+            const editJobsContainer = document.getElementById('edit-jobs-list-container');
+            if (editJobsContainer) {
+                editJobsContainer.innerHTML = `
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>加载任务中...</span>
+                    </div>
+                `;
             }
-            showNotification('该Jenkins实例没有找到任何任务', 'warning');
-            return;
-        }
-        
-        const options = jobs.map(job =>
-            `<option value="${job.fullName}">${job.displayName}</option>`
-        ).join('');
-        
-        if (event.target.closest('#create-job-modal') && jobSelectModal) {
-            jobSelectModal.innerHTML = `<option value="">请选择Jenkins任务</option>${options}`;
-        } else if (event.target.closest('#edit-job-form') && editJobSelect) {
-            editJobSelect.innerHTML = `<option value="">请选择Jenkins任务</option>${options}`;
+            
+            jobs = await API.get(`/api/jenkins/${configId}/jobs`);
+            
+            if (jobs.length === 0) {
+                if (editJobsContainer) {
+                    editJobsContainer.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">📭</div>
+                            <p>该Jenkins实例没有任务</p>
+                        </div>
+                    `;
+                }
+                showNotification('该Jenkins实例没有找到任何任务', 'warning');
+                return;
+            }
+            
+            // 渲染任务列表到编辑模态框
+            renderEditJobsList(jobs);
+            // 绑定搜索功能
+            bindEditSearchFunctionality(jobs);
         }
         
         console.log(`成功加载 ${jobs.length} 个Jenkins任务`);
@@ -1233,13 +1421,756 @@ async function onJenkinsConfigChangeModal(event) {
         const errorMessage = `加载Jenkins任务失败: ${error.message}`;
         showNotification(errorMessage, 'error');
         
-        // 设置错误状态
-        if (event.target.closest('#create-job-modal') && jobSelectModal) {
-            jobSelectModal.innerHTML = '<option value="">加载失败</option>';
-        } else if (event.target.closest('#edit-job-form') && editJobSelect) {
-            editJobSelect.innerHTML = '<option value="">加载失败</option>';
+        if (event.target.closest('#create-job-modal')) {
+            showJobsError();
+        } else if (event.target.closest('#edit-job-form')) {
+            const editJobSelect = document.getElementById('edit-jenkins-job-select');
+            if (editJobSelect) {
+                editJobSelect.innerHTML = '<option value="">加载失败</option>';
+            }
         }
     }
+}
+
+// 多任务选择相关函数 - 为不同模态框分别存储
+const selectedJobs = {
+    create: new Set(),
+    edit: new Set()
+};
+
+function showJobsLoading() {
+    const container = document.getElementById('jobs-list-container');
+    if (container) {
+        container.innerHTML = `
+            <div class="loading-state">
+                <div class="spinner"></div>
+                <span>加载任务中...</span>
+            </div>
+        `;
+    }
+}
+
+function showJobsError() {
+    const container = document.getElementById('jobs-list-container');
+    if (container) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">❌</div>
+                <p>加载任务失败</p>
+            </div>
+        `;
+    }
+}
+
+function clearJobsList() {
+    const container = document.getElementById('jobs-list-container');
+    if (container) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📋</div>
+                <p>请先选择Jenkins配置</p>
+            </div>
+        `;
+    }
+    selectedJobs.create.clear();
+    updateSelectedJobsPreview('create');
+}
+
+function renderEditJobsList(jobs) {
+    const container = document.getElementById('edit-jobs-list-container');
+    if (!container) return;
+
+    if (jobs.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <p>该Jenkins实例没有任务</p>
+            </div>
+        `;
+        return;
+    }
+
+    const jobsHtml = jobs.map(job => {
+        const isSelected = selectedJobs.edit.has(job.fullName);
+        return `
+            <div class="job-item ${isSelected ? 'selected' : ''}" data-job-name="${job.fullName}">
+                <div class="job-checkbox" onclick="toggleJobSelection('${job.fullName}')"></div>
+                <div class="job-info">
+                    <div class="job-name">${job.displayName}</div>
+                    <div class="job-details">
+                        <span class="job-type">${job.type || '自由风格'}</span>
+                        ${job.lastBuild ? `
+                            <span class="last-build-status status-${job.lastBuild.status}">
+                                ${getStatusText(job.lastBuild.status)}
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = jobsHtml;
+}
+
+function bindEditSearchFunctionality(allJobs) {
+    const searchInput = document.getElementById('edit-job-search-input');
+    if (!searchInput) return;
+
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            const searchTerm = e.target.value.toLowerCase();
+            if (!searchTerm) {
+                renderEditJobsList(allJobs);
+                return;
+            }
+            
+            const filteredJobs = allJobs.filter(job =>
+                job.displayName.toLowerCase().includes(searchTerm) ||
+                job.fullName.toLowerCase().includes(searchTerm)
+            );
+            renderEditJobsList(filteredJobs);
+        }, 300);
+    });
+}
+
+function renderJobsList(jobs) {
+    const container = document.getElementById('jobs-list-container');
+    if (!container) return;
+
+    if (jobs.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <p>该Jenkins实例没有任务</p>
+            </div>
+        `;
+        return;
+    }
+
+    const jobsHtml = jobs.map(job => {
+        const isSelected = selectedJobs.create.has(job.fullName);
+        return `
+            <div class="job-item ${isSelected ? 'selected' : ''}" data-job-name="${job.fullName}">
+                <div class="job-checkbox" onclick="toggleJobSelection('${job.fullName}')"></div>
+                <div class="job-info">
+                    <div class="job-name">${job.displayName}</div>
+                    <div class="job-details">
+                        <span class="job-type">${job.type || '自由风格'}</span>
+                        ${job.lastBuild ? `
+                            <span class="last-build-status status-${job.lastBuild.status}">
+                                ${getStatusText(job.lastBuild.status)}
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = jobsHtml;
+}
+
+function bindSearchFunctionality(allJobs) {
+    const searchInput = document.getElementById('job-search-input');
+    if (!searchInput) return;
+
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            const searchTerm = e.target.value.toLowerCase();
+            if (!searchTerm) {
+                renderJobsList(allJobs);
+                return;
+            }
+            
+            const filteredJobs = allJobs.filter(job =>
+                job.displayName.toLowerCase().includes(searchTerm) ||
+                job.fullName.toLowerCase().includes(searchTerm)
+            );
+            renderJobsList(filteredJobs);
+        }, 300);
+    });
+}
+
+function toggleJobSelection(jobName) {
+    // 确定当前模态框类型
+    const modalType = document.getElementById('create-job-modal')?.style.display === 'block' ? 'create' : 'edit';
+    
+    if (selectedJobs[modalType].has(jobName)) {
+        selectedJobs[modalType].delete(jobName);
+    } else {
+        selectedJobs[modalType].add(jobName);
+    }
+    
+    updateSelectedJobsPreview(modalType);
+    
+    // 更新UI状态
+    const jobItem = document.querySelector(`[data-job-name="${jobName}"]`);
+    if (jobItem) {
+        jobItem.classList.toggle('selected');
+    }
+    
+    // 加载并显示选中任务的参数
+    loadSelectedJobsParameters();
+}
+
+function updateSelectedJobsPreview(modalType = 'create') {
+    const currentSelectedJobs = selectedJobs[modalType];
+    
+    if (modalType === 'create') {
+        // 更新创建任务模态框的预览
+        const countElement = document.getElementById('selected-job-count');
+        const previewElement = document.getElementById('selected-jobs-preview');
+        const tagsElement = document.getElementById('selected-tags');
+        const hiddenInput = document.getElementById('selected-jobs-data');
+        
+        if (countElement) {
+            countElement.textContent = currentSelectedJobs.size;
+        }
+        
+        if (previewElement) {
+            previewElement.style.display = currentSelectedJobs.size > 0 ? 'block' : 'none';
+        }
+        
+        if (tagsElement) {
+            const tagsHtml = Array.from(currentSelectedJobs).map(jobName => {
+                const jobDisplayName = jobName.split('/').pop() || jobName;
+                return `
+                    <div class="selected-tag">
+                        <span class="tag-name">${jobDisplayName}</span>
+                        <button type="button" class="tag-remove" onclick="removeSelectedJob('${jobName}', 'create')">×</button>
+                    </div>
+                `;
+            }).join('');
+            tagsElement.innerHTML = tagsHtml;
+        }
+        
+        if (hiddenInput) {
+            hiddenInput.value = JSON.stringify(Array.from(currentSelectedJobs));
+        }
+    } else if (modalType === 'edit') {
+        // 更新编辑任务模态框的预览
+        const editCountElement = document.getElementById('edit-selected-job-count');
+        const editPreviewElement = document.getElementById('edit-selected-jobs-preview');
+        const editTagsElement = document.getElementById('edit-selected-tags');
+        const editHiddenInput = document.getElementById('edit-selected-jobs-data');
+        
+        if (editCountElement) {
+            editCountElement.textContent = currentSelectedJobs.size;
+        }
+        
+        if (editPreviewElement) {
+            editPreviewElement.style.display = currentSelectedJobs.size > 0 ? 'block' : 'none';
+        }
+        
+        if (editTagsElement) {
+            const tagsHtml = Array.from(currentSelectedJobs).map(jobName => {
+                const jobDisplayName = jobName.split('/').pop() || jobName;
+                return `
+                    <div class="selected-tag">
+                        <span class="tag-name">${jobDisplayName}</span>
+                        <button type="button" class="tag-remove" onclick="removeSelectedJob('${jobName}', 'edit')">×</button>
+                    </div>
+                `;
+            }).join('');
+            editTagsElement.innerHTML = tagsHtml;
+        }
+        
+        if (editHiddenInput) {
+            editHiddenInput.value = JSON.stringify(Array.from(currentSelectedJobs));
+        }
+    }
+}
+
+function removeSelectedJob(jobName, modalType = 'create') {
+    selectedJobs[modalType].delete(jobName);
+    updateSelectedJobsPreview(modalType);
+    
+    // 更新任务列表中的选中状态
+    const jobItem = document.querySelector(`[data-job-name="${jobName}"]`);
+    if (jobItem) {
+        jobItem.classList.remove('selected');
+    }
+    
+    // 从参数状态中移除该任务的参数
+    if (AppState.jobParameters) {
+        AppState.jobParameters = AppState.jobParameters.filter(param => param._jobName !== jobName);
+    }
+    
+    // 重新加载参数
+    loadSelectedJobsParameters();
+}
+
+function clearSelectedJobs(modalType = 'create') {
+    selectedJobs[modalType].clear();
+    updateSelectedJobsPreview(modalType);
+    
+    // 清除所有任务项的选中状态
+    document.querySelectorAll('.job-item.selected').forEach(item => {
+        item.classList.remove('selected');
+    });
+    
+    // 清空参数状态
+    AppState.jobParameters = [];
+    JobParametersState[modalType].parameters = [];
+    JobParametersState[modalType].currentValues = {};
+    
+    // 清除创建任务模态框的参数显示
+    const parametersContainerModal = document.getElementById('parameters-container-modal');
+    if (parametersContainerModal) {
+        parametersContainerModal.innerHTML = '<p class="no-parameters">请选择至少一个Jenkins任务</p>';
+    }
+    
+    // 清除编辑任务模态框的参数显示
+    const editParametersContainer = document.getElementById('edit-parameters-container');
+    if (editParametersContainer) {
+        editParametersContainer.innerHTML = '<p class="no-parameters">请选择至少一个Jenkins任务</p>';
+    }
+}
+
+// 加载并显示选中任务的参数 - 增量渲染版本
+async function loadSelectedJobsParameters() {
+    // 检查当前是创建任务模态框还是编辑任务模态框
+    const createConfigSelect = document.getElementById('jenkins-config-select-modal');
+    const createParametersContainer = document.getElementById('parameters-container-modal');
+    const editConfigSelect = document.getElementById('edit-jenkins-config-select');
+    const editParametersContainer = document.getElementById('edit-parameters-container');
+    
+    let configSelect, parametersContainer;
+    let isEditMode = false;
+    let modalType = 'create';
+    
+    // 优先检查当前活动的模态框
+    const createModal = document.getElementById('create-job-modal');
+    const editModal = document.getElementById('edit-job-modal');
+    
+    if (editModal && editModal.style.display === 'block' && editConfigSelect && editParametersContainer) {
+        // 编辑任务模态框是活动的
+        configSelect = editConfigSelect;
+        parametersContainer = editParametersContainer;
+        isEditMode = true;
+        modalType = 'edit';
+        console.log('检测到编辑任务模态框活动');
+    } else if (createModal && createModal.style.display === 'block' && createConfigSelect && createParametersContainer) {
+        // 创建任务模态框是活动的
+        configSelect = createConfigSelect;
+        parametersContainer = createParametersContainer;
+        isEditMode = false;
+        modalType = 'create';
+        console.log('检测到创建任务模态框活动');
+    } else {
+        // 如果没有活动的模态框，默认使用创建任务模态框
+        if (createConfigSelect && createParametersContainer) {
+            configSelect = createConfigSelect;
+            parametersContainer = createParametersContainer;
+            isEditMode = false;
+            modalType = 'create';
+            console.log('默认使用创建任务模态框');
+        } else if (editConfigSelect && editParametersContainer) {
+            configSelect = editConfigSelect;
+            parametersContainer = editParametersContainer;
+            isEditMode = true;
+            modalType = 'edit';
+            console.log('默认使用编辑任务模态框');
+        } else {
+            console.log('没有找到可用的模态框元素');
+            return;
+        }
+    }
+    
+    const configId = configSelect.value;
+    if (!configId) {
+        parametersContainer.innerHTML = '<p class="no-parameters">请先选择Jenkins配置</p>';
+        return;
+    }
+    
+    const currentSelectedJobs = selectedJobs[modalType];
+    if (currentSelectedJobs.size === 0) {
+        parametersContainer.innerHTML = '<p class="no-parameters">请选择至少一个Jenkins任务</p>';
+        return;
+    }
+    
+    console.log(`增量加载参数 - 模态框: ${isEditMode ? '编辑' : '创建'}, 配置ID: ${configId}, 选中任务数: ${currentSelectedJobs.size}`);
+    
+    try {
+        // 保存当前用户填写的参数值
+        const currentParameters = collectCurrentParameters();
+        
+        // 检测新增和删除的任务
+        const stateKey = modalType;
+        const existingJobNames = new Set(JobParametersState[stateKey].parameters.map(p => p._jobName));
+        const currentJobNames = new Set(Array.from(currentSelectedJobs));
+        
+        const newJobs = Array.from(currentJobNames).filter(jobName => !existingJobNames.has(jobName));
+        const removedJobs = Array.from(existingJobNames).filter(jobName => !currentJobNames.has(jobName));
+        
+        console.log(`增量检测 - 新增任务: ${newJobs.length}, 删除任务: ${removedJobs.length}`);
+        
+        // 处理删除的任务 - 从状态中移除
+        if (removedJobs.length > 0) {
+            JobParametersState[stateKey].parameters = JobParametersState[stateKey].parameters.filter(
+                param => !removedJobs.includes(param._jobName)
+            );
+            // 从DOM中移除删除的任务参数
+            removedJobs.forEach(jobName => {
+                const jobGroup = parametersContainer.querySelector(`[data-job-group="${jobName}"]`);
+                if (jobGroup) {
+                    jobGroup.remove();
+                }
+            });
+        }
+        
+        // 如果有新增任务，只加载新增任务的参数
+        if (newJobs.length > 0) {
+            // 显示增量加载状态
+            const loadingHtml = `
+                <div class="loading-state incremental">
+                    <div class="spinner"></div>
+                    <span>加载新增任务参数中... (${newJobs.length} 个任务)</span>
+                </div>
+            `;
+            
+            // 如果已有参数，追加加载状态；否则显示完整加载状态
+            if (JobParametersState[stateKey].parameters.length > 0) {
+                const existingLoading = parametersContainer.querySelector('.loading-state.incremental');
+                if (!existingLoading) {
+                    parametersContainer.insertAdjacentHTML('beforeend', loadingHtml);
+                }
+            } else {
+                parametersContainer.innerHTML = loadingHtml;
+            }
+            
+            // 为新增任务加载参数
+            const newParameters = [];
+            for (const jobName of newJobs) {
+                try {
+                    // 使用任务名称获取参数（后端会处理URL构建）
+                    const parameters = await API.get(`/api/jenkins/${configId}/jobs/${encodeURIComponent(jobName)}/parameters`);
+                    if (parameters && parameters.length > 0) {
+                        // 为参数添加任务标识
+                        const jobParameters = parameters.map(param => ({
+                            ...param,
+                            _jobName: jobName,
+                            _jobDisplayName: jobName.split('/').pop() || jobName
+                        }));
+                        newParameters.push(...jobParameters);
+                    }
+                } catch (error) {
+                    console.error(`加载任务 ${jobName} 的参数失败:`, error);
+                    // 单个任务参数加载失败不影响其他任务
+                    // 可以在这里添加错误提示，但不要阻止其他任务加载
+                }
+            }
+            
+            // 更新状态
+            JobParametersState[stateKey].parameters = [...JobParametersState[stateKey].parameters, ...newParameters];
+            
+            // 移除加载状态
+            const loadingElement = parametersContainer.querySelector('.loading-state.incremental');
+            if (loadingElement) {
+                loadingElement.remove();
+            }
+            
+            // 渲染新增任务的参数
+            if (newParameters.length > 0) {
+                if (modalType === 'edit') {
+                    renderIncrementalJobParametersEditModal(newParameters);
+                } else {
+                    renderIncrementalJobParametersModal(newParameters);
+                }
+            }
+        }
+        
+        // 如果没有新增任务也没有删除任务，只是参数值变化，直接恢复参数值
+        if (newJobs.length === 0 && removedJobs.length === 0) {
+            restoreParameters(currentParameters);
+        }
+        
+        console.log(`增量加载完成 - 总参数数: ${JobParametersState[stateKey].parameters.length}, 模态框: ${modalType}`);
+        
+        // 如果没有参数，显示提示
+        if (JobParametersState[stateKey].parameters.length === 0) {
+            parametersContainer.innerHTML = '<p class="no-parameters">选中的任务都没有参数</p>';
+        }
+        
+    } catch (error) {
+        console.error('增量加载任务参数失败:', error);
+        parametersContainer.innerHTML = `
+            <div class="error-state">
+                <div class="error-icon">❌</div>
+                <p>加载任务参数失败: ${error.message}</p>
+                <small>请检查Jenkins配置和网络连接</small>
+            </div>
+        `;
+    }
+}
+
+// 收集当前用户填写的参数值
+function collectCurrentParameters() {
+    const currentParams = {};
+    
+    // 检测当前活动的模态框
+    const createModal = document.getElementById('create-job-modal');
+    const editModal = document.getElementById('edit-job-modal');
+    
+    let paramsContainer;
+    if (editModal && editModal.style.display === 'block') {
+        paramsContainer = document.getElementById('edit-parameters-container');
+    } else if (createModal && createModal.style.display === 'block') {
+        paramsContainer = document.getElementById('parameters-container-modal');
+    }
+    
+    if (paramsContainer) {
+        const inputs = paramsContainer.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+            if (input.name && input.name.startsWith('param_')) {
+                const paramName = input.name.replace('param_', '');
+                if (input.type === 'checkbox') {
+                    currentParams[paramName] = input.checked;
+                } else {
+                    currentParams[paramName] = input.value;
+                }
+            }
+        });
+    }
+    
+    return currentParams;
+}
+
+// 恢复用户填写的参数值
+function restoreParameters(savedParameters) {
+    // 检测当前活动的模态框
+    const createModal = document.getElementById('create-job-modal');
+    const editModal = document.getElementById('edit-job-modal');
+    
+    let paramsContainer;
+    if (editModal && editModal.style.display === 'block') {
+        paramsContainer = document.getElementById('edit-parameters-container');
+    } else if (createModal && createModal.style.display === 'block') {
+        paramsContainer = document.getElementById('parameters-container-modal');
+    }
+    
+    if (paramsContainer) {
+        const inputs = paramsContainer.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+            if (input.name && input.name.startsWith('param_')) {
+                const paramName = input.name.replace('param_', '');
+                if (savedParameters[paramName] !== undefined) {
+                    if (input.type === 'checkbox') {
+                        input.checked = savedParameters[paramName];
+                    } else {
+                        input.value = savedParameters[paramName];
+                    }
+                }
+            }
+        });
+    }
+}
+
+// 渲染编辑任务模态框中的多任务参数
+function renderMultiJobParametersEditModal(parameters) {
+    const container = document.getElementById('edit-parameters-container');
+    
+    // 按任务分组参数
+    const parametersByJob = {};
+    parameters.forEach(param => {
+        if (!parametersByJob[param._jobName]) {
+            parametersByJob[param._jobName] = [];
+        }
+        parametersByJob[param._jobName].push(param);
+    });
+    
+    const html = Object.entries(parametersByJob).map(([jobName, jobParams]) => {
+        const jobDisplayName = jobName.split('/').pop() || jobName;
+        const jobParamsHtml = jobParams.map(param => {
+            switch (param._class) {
+                case 'hudson.model.StringParameterDefinition':
+                case 'hudson.model.TextParameterDefinition':
+                    return renderStringParameterModal(param);
+                case 'hudson.model.ChoiceParameterDefinition':
+                    return renderChoiceParameterModal(param);
+                case 'hudson.model.BooleanParameterDefinition':
+                    return renderBooleanParameterModal(param);
+                case 'net.uaznia.lukanus.hudson.plugins.gitparameter.GitParameterDefinition':
+                    return renderGitParameterModal(param);
+                default:
+                    return renderStringParameterModal(param);
+            }
+        }).join('');
+        
+        return `
+            <div class="job-parameters-group" data-job-group="${jobName}">
+                <div class="job-parameters-header">
+                    <h4>${jobDisplayName}</h4>
+                </div>
+                <div class="job-parameters-content">
+                    ${jobParamsHtml}
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `
+        <div class="job-parameters-container">
+            ${html}
+        </div>
+    `;
+}
+
+// 增量渲染编辑任务模态框中的参数
+function renderIncrementalJobParametersEditModal(parameters) {
+    const container = document.getElementById('edit-parameters-container');
+    if (!container) return;
+    
+    // 按任务分组参数
+    const parametersByJob = {};
+    parameters.forEach(param => {
+        if (!parametersByJob[param._jobName]) {
+            parametersByJob[param._jobName] = [];
+        }
+        parametersByJob[param._jobName].push(param);
+    });
+    
+    // 为每个新增任务创建参数组并追加到容器
+    Object.entries(parametersByJob).forEach(([jobName, jobParams]) => {
+        const jobDisplayName = jobName.split('/').pop() || jobName;
+        const jobParamsHtml = jobParams.map(param => {
+            switch (param._class) {
+                case 'hudson.model.StringParameterDefinition':
+                case 'hudson.model.TextParameterDefinition':
+                    return renderStringParameterModal(param);
+                case 'hudson.model.ChoiceParameterDefinition':
+                    return renderChoiceParameterModal(param);
+                case 'hudson.model.BooleanParameterDefinition':
+                    return renderBooleanParameterModal(param);
+                case 'net.uaznia.lukanus.hudson.plugins.gitparameter.GitParameterDefinition':
+                    return renderGitParameterModal(param);
+                default:
+                    return renderStringParameterModal(param);
+            }
+        }).join('');
+        
+        const jobGroupHtml = `
+            <div class="job-parameters-group" data-job-group="${jobName}">
+                <div class="job-parameters-header">
+                    <h4>${jobDisplayName}</h4>
+                </div>
+                <div class="job-parameters-content">
+                    ${jobParamsHtml}
+                </div>
+            </div>
+        `;
+        
+        // 追加到容器末尾
+        container.insertAdjacentHTML('beforeend', jobGroupHtml);
+    });
+    
+    console.log(`增量渲染完成 - 新增 ${parameters.length} 个参数`);
+}
+
+// 渲染多任务的参数
+function renderMultiJobParametersModal(parameters) {
+    const container = document.getElementById('parameters-container-modal');
+    
+    // 按任务分组参数
+    const parametersByJob = {};
+    parameters.forEach(param => {
+        if (!parametersByJob[param._jobName]) {
+            parametersByJob[param._jobName] = [];
+        }
+        parametersByJob[param._jobName].push(param);
+    });
+    
+    const html = Object.entries(parametersByJob).map(([jobName, jobParams]) => {
+        const jobDisplayName = jobName.split('/').pop() || jobName;
+        const jobParamsHtml = jobParams.map(param => {
+            switch (param._class) {
+                case 'hudson.model.StringParameterDefinition':
+                case 'hudson.model.TextParameterDefinition':
+                    return renderStringParameterModal(param);
+                case 'hudson.model.ChoiceParameterDefinition':
+                    return renderChoiceParameterModal(param);
+                case 'hudson.model.BooleanParameterDefinition':
+                    return renderBooleanParameterModal(param);
+                case 'net.uaznia.lukanus.hudson.plugins.gitparameter.GitParameterDefinition':
+                    return renderGitParameterModal(param);
+                default:
+                    return renderStringParameterModal(param);
+            }
+        }).join('');
+        
+        return `
+            <div class="job-parameters-group" data-job-group="${jobName}">
+                <div class="job-parameters-header">
+                    <h4>${jobDisplayName}</h4>
+                </div>
+                <div class="job-parameters-content">
+                    ${jobParamsHtml}
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `
+        <div class="job-parameters-container">
+            ${html}
+        </div>
+    `;
+}
+
+// 增量渲染多任务的参数
+function renderIncrementalJobParametersModal(parameters) {
+    const container = document.getElementById('parameters-container-modal');
+    if (!container) return;
+    
+    // 按任务分组参数
+    const parametersByJob = {};
+    parameters.forEach(param => {
+        if (!parametersByJob[param._jobName]) {
+            parametersByJob[param._jobName] = [];
+        }
+        parametersByJob[param._jobName].push(param);
+    });
+    
+    // 为每个新增任务创建参数组并追加到容器
+    Object.entries(parametersByJob).forEach(([jobName, jobParams]) => {
+        const jobDisplayName = jobName.split('/').pop() || jobName;
+        const jobParamsHtml = jobParams.map(param => {
+            switch (param._class) {
+                case 'hudson.model.StringParameterDefinition':
+                case 'hudson.model.TextParameterDefinition':
+                    return renderStringParameterModal(param);
+                case 'hudson.model.ChoiceParameterDefinition':
+                    return renderChoiceParameterModal(param);
+                case 'hudson.model.BooleanParameterDefinition':
+                    return renderBooleanParameterModal(param);
+                case 'net.uaznia.lukanus.hudson.plugins.gitparameter.GitParameterDefinition':
+                    return renderGitParameterModal(param);
+                default:
+                    return renderStringParameterModal(param);
+            }
+        }).join('');
+        
+        const jobGroupHtml = `
+            <div class="job-parameters-group" data-job-group="${jobName}">
+                <div class="job-parameters-header">
+                    <h4>${jobDisplayName}</h4>
+                </div>
+                <div class="job-parameters-content">
+                    ${jobParamsHtml}
+                </div>
+            </div>
+        `;
+        
+        // 追加到容器末尾
+        container.insertAdjacentHTML('beforeend', jobGroupHtml);
+    });
+    
+    console.log(`增量渲染完成 - 新增 ${parameters.length} 个参数`);
 }
 
 // 模态框中Jenkins任务变化处理
@@ -1319,78 +2250,31 @@ function renderJobParametersEditModal(parameters) {
     }
     
     container.innerHTML = parameters.map(param => {
-        let inputHtml = '';
-        
-        switch (param.type) {
-            case 'StringParameterDefinition':
-                inputHtml = `
-                    <input type="text" 
-                           id="param_${param.name}" 
-                           name="param_${param.name}" 
-                           value="${param.defaultParameterValue ? param.defaultParameterValue.value : ''}"
-                           placeholder="请输入${param.name}">
-                `;
-                break;
-                
-            case 'ChoiceParameterDefinition':
-                const options = param.choices.map(choice => 
-                    `<option value="${choice}" ${choice === (param.defaultParameterValue ? param.defaultParameterValue.value : '') ? 'selected' : ''}>${choice}</option>`
-                ).join('');
-                inputHtml = `<select id="param_${param.name}" name="param_${param.name}">${options}</select>`;
-                break;
-                
-            case 'BooleanParameterDefinition':
-                const checked = param.defaultParameterValue && 
-                               (param.defaultParameterValue.value === 'true' || param.defaultParameterValue.value === true) ? 'checked' : '';
-                inputHtml = `
-                    <label class="checkbox-label">
-                        <input type="checkbox" 
-                               id="param_${param.name}" 
-                               name="param_${param.name}" 
-                               ${checked}>
-                        ${param.description || '启用选项'}
-                    </label>
-                `;
-                break;
-                
-            case 'TextParameterDefinition':
-                inputHtml = `
-                    <textarea id="param_${param.name}" 
-                              name="param_${param.name}" 
-                              placeholder="请输入${param.name}">${param.defaultParameterValue ? param.defaultParameterValue.value : ''}</textarea>
-                `;
-                break;
-                
+        switch (param._class) {
+            case 'hudson.model.StringParameterDefinition':
+            case 'hudson.model.TextParameterDefinition':
+                return renderStringParameterModal(param);
+            case 'hudson.model.ChoiceParameterDefinition':
+                return renderChoiceParameterModal(param);
+            case 'hudson.model.BooleanParameterDefinition':
+                return renderBooleanParameterModal(param);
+            case 'net.uaznia.lukanus.hudson.plugins.gitparameter.GitParameterDefinition':
+                return renderGitParameterModal(param);
             default:
-                inputHtml = `
-                    <input type="text" 
-                           id="param_${param.name}" 
-                           name="param_${param.name}" 
-                           value="${param.defaultParameterValue ? param.defaultParameterValue.value : ''}"
-                           placeholder="请输入${param.name}">
-                `;
+                return renderGenericParameterModal(param);
         }
-        
-        return `
-            <div class="parameter-item">
-                <h4>${param.name}</h4>
-                ${param.description ? `<div class="parameter-description">${param.description}</div>` : ''}
-                <div class="parameter-input">
-                    ${inputHtml}
-                </div>
-            </div>
-        `;
     }).join('');
 }
 
 // 渲染模态框中的字符串参数
 function renderStringParameterModal(param) {
+    const jobNameAttr = param._jobName ? `data-job-name="${param._jobName}"` : '';
     return `
         <div class="parameter-item">
             <h4>${param.name}</h4>
             <div class="parameter-description">${param.description || ''}</div>
             <input type="text" name="param_${param.name}" value="${param.defaultParameterValue?.value || ''}" 
-                   placeholder="请输入${param.name}">
+                   placeholder="请输入${param.name}" ${jobNameAttr}>
         </div>
     `;
 }
@@ -1398,11 +2282,12 @@ function renderStringParameterModal(param) {
 // 渲染模态框中的选择参数
 function renderChoiceParameterModal(param) {
     const choices = param.choices || [];
+    const jobNameAttr = param._jobName ? `data-job-name="${param._jobName}"` : '';
     return `
         <div class="parameter-item">
             <h4>${param.name}</h4>
             <div class="parameter-description">${param.description || ''}</div>
-            <select name="param_${param.name}">
+            <select name="param_${param.name}" ${jobNameAttr}>
                 ${choices.map(choice => `
                     <option value="${choice}" ${choice === param.defaultParameterValue?.value ? 'selected' : ''}>
                         ${choice}
@@ -1416,12 +2301,13 @@ function renderChoiceParameterModal(param) {
 // 渲染模态框中的布尔参数
 function renderBooleanParameterModal(param) {
     const defaultValue = param.defaultParameterValue?.value || false;
+    const jobNameAttr = param._jobName ? `data-job-name="${param._jobName}"` : '';
     return `
         <div class="parameter-item">
             <h4>${param.name}</h4>
             <div class="parameter-description">${param.description || ''}</div>
             <label class="radio-label">
-                <input type="checkbox" name="param_${param.name}" ${defaultValue ? 'checked' : ''}>
+                <input type="checkbox" name="param_${param.name}" ${defaultValue ? 'checked' : ''} ${jobNameAttr}>
                 启用
             </label>
         </div>
@@ -1431,11 +2317,12 @@ function renderBooleanParameterModal(param) {
 // 渲染模态框中的Git参数
 function renderGitParameterModal(param) {
     const branches = param.allValueItems?.values || [];
+    const jobNameAttr = param._jobName ? `data-job-name="${param._jobName}"` : '';
     return `
         <div class="parameter-item">
             <h4>${param.name} (Git分支)</h4>
             <div class="parameter-description">${param.description || ''}</div>
-            <select name="param_${param.name}">
+            <select name="param_${param.name}" ${jobNameAttr}>
                 ${branches.map(branch => `
                     <option value="${branch.value}" ${branch.value === param.defaultParameterValue?.value ? 'selected' : ''}>
                         ${branch.name}
@@ -1449,12 +2336,13 @@ function renderGitParameterModal(param) {
 
 // 渲染模态框中的通用参数
 function renderGenericParameterModal(param) {
+    const jobNameAttr = param._jobName ? `data-job-name="${param._jobName}"` : '';
     return `
         <div class="parameter-item">
             <h4>${param.name}</h4>
             <div class="parameter-description">${param.description || ''}</div>
             <input type="text" name="param_${param.name}" value="${param.defaultParameterValue?.value || ''}" 
-                   placeholder="请输入${param.name}">
+                   placeholder="请输入${param.name}" ${jobNameAttr}>
             <small class="form-help">参数类型: ${param._class}</small>
         </div>
     `;
@@ -1462,31 +2350,34 @@ function renderGenericParameterModal(param) {
 
 // 初始化模态框表单事件
 function initModalForms() {
-    // 创建任务表单
-    document.getElementById('create-job-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const submitBtn = e.target.querySelector('button[type="submit"]');
-        
-        // 防抖机制：如果按钮已禁用，说明正在提交中，直接返回
-        if (submitBtn.disabled) {
-            return;
-        }
-        
-        // 禁用提交按钮，防止重复提交
-        submitBtn.disabled = true;
-        submitBtn.textContent = '创建中...';
-        
-        const formData = new FormData(e.target);
-        const data = Object.fromEntries(formData);
-        
-        // 表单验证
-        if (!data.name || !data.name.trim()) {
-            showNotification('请输入任务名称', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '创建任务';
-            return;
-        }
+    // 创建任务表单（仅在元素存在时添加）
+    const createJobForm = document.getElementById('create-job-form');
+    if (createJobForm) {
+        createJobForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            
+            // 防抖机制：如果按钮已禁用，说明正在提交中，直接返回
+            if (submitBtn.disabled) {
+                return;
+            }
+            
+            // 禁用提交按钮，防止重复提交
+            submitBtn.disabled = true;
+            submitBtn.textContent = '创建中...';
+            
+            const formData = new FormData(e.target);
+            console.log('FormData:', Array.from(formData.entries()));
+            const data = Object.fromEntries(formData);
+            
+            // 表单验证
+            if (!data.name || !data.name.trim()) {
+                showNotification('请输入任务名称', 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '创建任务';
+                return;
+            }
         
         if (!data.jenkins_config_id) {
             showNotification('请选择Jenkins配置', 'error');
@@ -1495,8 +2386,27 @@ function initModalForms() {
             return;
         }
         
-        if (!data.jenkins_job_name) {
-            showNotification('请选择Jenkins任务', 'error');
+        // 验证多任务选择
+        const selectedJobsData = document.getElementById('selected-jobs-data');
+        if (!selectedJobsData || !selectedJobsData.value) {
+            showNotification('请选择至少一个Jenkins任务', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建任务';
+            return;
+        }
+        
+        // 解析选中的任务
+        try {
+            const selectedJobs = JSON.parse(selectedJobsData.value);
+            if (!Array.isArray(selectedJobs) || selectedJobs.length === 0) {
+                showNotification('请选择至少一个Jenkins任务', 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '创建任务';
+                return;
+            }
+            data.jenkins_jobs = selectedJobs;
+        } catch (error) {
+            showNotification('任务数据格式错误', 'error');
             submitBtn.disabled = false;
             submitBtn.textContent = '创建任务';
             return;
@@ -1521,23 +2431,48 @@ function initModalForms() {
         data.execute_once = data.execution_type === 'once';
         delete data.execution_type;
         
-        // 收集任务参数
-        const parameters = {};
-        AppState.jobParameters.forEach(param => {
-            const paramName = `param_${param.name}`;
-            if (formData.has(paramName)) {
-                let value = formData.get(paramName);
-                
-                // 处理布尔参数
-                if (param._class === 'hudson.model.BooleanParameterDefinition') {
-                    value = formData.has(paramName);
+        // 合并 jenkins_jobs 和 job_parameters - 创建统一的任务配置对象
+        const jobConfigs = {};
+        const jobParameters = {};
+        const jobNames = [];
+        
+        data.jenkins_jobs.forEach(jobName => {
+            jobNames.push(jobName);
+            jobParameters[jobName] = {};
+            
+            // 收集该任务的参数 - 使用 data-job-name 属性来精确匹配
+            const jobInputs = document.querySelectorAll(`[data-job-name="${jobName}"]`);
+            jobInputs.forEach(input => {
+                if (input.name && input.name.startsWith('param_')) {
+                    const paramName = input.name.replace('param_', '');
+                    let value;
+                    
+                    if (input.type === 'checkbox') {
+                        value = input.checked;
+                    } else if (input.type === 'select-one') {
+                        value = input.value;
+                    } else {
+                        value = input.value;
+                    }
+                    
+                    // 如果参数存在且不为空，才保存
+                    if (value !== null && value !== undefined && value !== '') {
+                        jobParameters[jobName][paramName] = value;
+                    }
                 }
-                
-                parameters[param.name] = value;
-            }
+            });
         });
         
-        data.parameters = parameters;
+        // 使用统一的任务配置对象
+        data.job_configs = jobParameters;
+        // 清空冗余的 jenkins_jobs 字段，因为任务名可以从 job_configs 中提取
+        delete data.jenkins_jobs;
+        // 对于多任务模式，清空单任务参数字段，避免冲突
+        delete data.param_BRANCH;
+        delete data.param_environment;
+        delete data.param_Deploy_to;
+        // 完全移除冗余的 parameters 字段，只使用 job_configs
+        delete data.parameters;
         
         try {
             await API.post('/api/scheduled-jobs', data);
@@ -1551,34 +2486,40 @@ function initModalForms() {
             submitBtn.disabled = false;
             submitBtn.textContent = '创建任务';
         }
-    });
+        });
+    }
     
-    // 编辑任务表单
-    document.getElementById('edit-job-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const submitBtn = e.target.querySelector('button[type="submit"]');
-        
-        // 防抖机制：如果按钮已禁用，说明正在提交中，直接返回
-        if (submitBtn.disabled) {
-            return;
-        }
-        
-        // 禁用提交按钮，防止重复提交
-        submitBtn.disabled = true;
-        submitBtn.textContent = '更新中...';
-        
-        const formData = new FormData(e.target);
-        const jobId = formData.get('id');
-        const data = Object.fromEntries(formData);
-        
-        // 表单验证
-        if (!data.name || !data.name.trim()) {
-            showNotification('请输入任务名称', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '更新任务';
-            return;
-        }
+    // 编辑任务表单（仅在元素存在时添加）
+    const editJobForm = document.getElementById('edit-job-form');
+    if (editJobForm) {
+        editJobForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            
+            // 防抖机制：如果按钮已禁用，说明正在提交中，直接返回
+            if (submitBtn.disabled) {
+                return;
+            }
+            
+            // 禁用提交按钮，防止重复提交
+            submitBtn.disabled = true;
+            submitBtn.textContent = '更新中...';
+            
+            const formData = new FormData(e.target);
+            const jobId = formData.get('id');
+            const data = Object.fromEntries(formData);
+            
+            console.log('编辑任务表单数据:', data);
+            console.log('选中的任务:', Array.from(selectedJobs.edit));
+            
+            // 表单验证
+            if (!data.name || !data.name.trim()) {
+                showNotification('请输入任务名称', 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '更新任务';
+                return;
+            }
         
         if (!data.jenkins_config_id) {
             showNotification('请选择Jenkins配置', 'error');
@@ -1587,8 +2528,12 @@ function initModalForms() {
             return;
         }
         
-        if (!data.jenkins_job_name) {
-            showNotification('请选择Jenkins任务', 'error');
+        // 任务验证：统一使用多任务模式
+        const isMultiJobMode = selectedJobs.edit.size > 0;
+        
+        // 检查是否有选中的任务
+        if (!isMultiJobMode) {
+            showNotification('请选择至少一个Jenkins任务', 'error');
             submitBtn.disabled = false;
             submitBtn.textContent = '更新任务';
             return;
@@ -1614,48 +2559,96 @@ function initModalForms() {
         delete data.execution_type;
         delete data.id;
         
-        // 收集任务参数
-        const parameters = {};
-        AppState.jobParameters.forEach(param => {
-            const paramName = `param_${param.name}`;
-            if (formData.has(paramName)) {
-                let value = formData.get(paramName);
-                
-                // 处理布尔参数
-                if (param._class === 'hudson.model.BooleanParameterDefinition') {
-                    value = formData.has(paramName);
+        // 统一使用多任务模式处理（单任务就是只有一个任务的多任务）
+        data.jenkins_jobs = Array.from(selectedJobs.edit);
+        // 清空单任务字段，确保后端正确处理
+        data.jenkins_job_name = '';
+        
+        // 合并 jenkins_jobs 和 job_parameters - 创建统一的任务配置对象
+        const jobParameters = {};
+        selectedJobs.edit.forEach(jobName => {
+            jobParameters[jobName] = {};
+            
+            // 收集该任务的参数 - 使用 data-job-name 属性来精确匹配
+            const jobInputs = document.querySelectorAll(`[data-job-name="${jobName}"]`);
+            jobInputs.forEach(input => {
+                if (input.name && input.name.startsWith('param_')) {
+                    const paramName = input.name.replace('param_', '');
+                    let value;
+                    
+                    if (input.type === 'checkbox') {
+                        value = input.checked;
+                    } else if (input.type === 'select-one') {
+                        value = input.value;
+                    } else {
+                        value = input.value;
+                    }
+                    
+                    // 如果参数存在且不为空，才保存
+                    if (value !== null && value !== undefined && value !== '') {
+                        jobParameters[jobName][paramName] = value;
+                    }
                 }
-                
-                parameters[param.name] = value;
-            }
+            });
         });
         
-        data.parameters = parameters;
+        // 使用统一的任务配置对象
+        data.job_configs = jobParameters;
+        // 清空冗余的 jenkins_jobs 字段，因为任务名可以从 job_configs 中提取
+        delete data.jenkins_jobs;
+        // 清空单任务参数字段，避免冲突
+        delete data.param_BRANCH;
+        delete data.param_environment;
+        delete data.param_Deploy_to;
+        // 完全移除冗余的 parameters 字段，只使用 job_configs
+        delete data.parameters;
         
         try {
-            await API.put(`/api/scheduled-jobs/${jobId}`, data);
+            console.log('发送更新请求:', data);
+            const response = await API.put(`/api/scheduled-jobs/${jobId}`, data);
+            console.log('更新响应:', response);
             showNotification('定时任务更新成功', 'success');
             closeEditJobModal();
             loadJobList(); // 刷新任务列表
         } catch (error) {
+            console.error('更新任务失败:', error);
             showNotification('更新失败: ' + error.message, 'error');
         } finally {
             // 无论成功或失败，都重新启用提交按钮
             submitBtn.disabled = false;
             submitBtn.textContent = '更新任务';
         }
-    });
+        });
+    }
     
-    // 为模态框中的选择器添加事件监听器
-    document.getElementById('jenkins-config-select-modal').addEventListener('change', onJenkinsConfigChangeModal);
-    document.getElementById('jenkins-job-select-modal').addEventListener('change', onJenkinsJobChangeModal);
-    document.getElementById('edit-jenkins-config-select').addEventListener('change', onJenkinsConfigChangeModal);
-    document.getElementById('edit-jenkins-job-select').addEventListener('change', onJenkinsJobChangeModal);
+    // 为模态框中的选择器添加事件监听器（仅在元素存在时添加）
+    const jenkinsConfigSelectModal = document.getElementById('jenkins-config-select-modal');
+    const jenkinsJobSelectModal = document.getElementById('jenkins-job-select-modal');
+    const editJenkinsConfigSelect = document.getElementById('edit-jenkins-config-select');
+    const editJenkinsJobSelect = document.getElementById('edit-jenkins-job-select');
+    
+    if (jenkinsConfigSelectModal) {
+        jenkinsConfigSelectModal.addEventListener('change', onJenkinsConfigChangeModal);
+    }
+    if (jenkinsJobSelectModal) {
+        jenkinsJobSelectModal.addEventListener('change', onJenkinsJobChangeModal);
+    }
+    if (editJenkinsConfigSelect) {
+        editJenkinsConfigSelect.addEventListener('change', onJenkinsConfigChangeModal);
+    }
+    if (editJenkinsJobSelect) {
+        editJenkinsJobSelect.addEventListener('change', onJenkinsJobChangeModal);
+    }
 }
 
 // 打开编辑任务弹窗
 async function openEditJobModal(jobId) {
     try {
+        // 重置编辑任务模态框的状态
+        JobParametersState.edit.parameters = [];
+        JobParametersState.edit.currentValues = {};
+        selectedJobs.edit.clear();
+        
         // 获取任务详情
         const job = await API.get(`/api/scheduled-jobs/${jobId}`);
         
@@ -1679,25 +2672,76 @@ async function openEditJobModal(jobId) {
         // 触发配置变化事件以加载任务列表
         if (configSelect) await onJenkinsConfigChangeModal({ target: configSelect });
         
-        // 设置Jenkins任务
+        // 设置Jenkins任务 - 支持多任务回显
         setTimeout(async () => {
-            const jobSelect = document.getElementById('edit-jenkins-job-select');
-            if (jobSelect) {
-                jobSelect.value = job.jenkins_job_name;
+            // 检查是否是多任务
+            if (job.jenkins_jobs && job.jenkins_jobs.length > 0) {
+                // 多任务模式 - 后端已经处理过转义符，直接使用即可
+                const jobNames = Array.isArray(job.jenkins_jobs) ? job.jenkins_jobs : [];
                 
-                // 触发任务变化事件以加载参数
-                await onJenkinsJobChangeModal({ target: jobSelect });
+                // 清空并设置选中的任务
+                selectedJobs.edit.clear();
                 
-                // 填充任务参数
+                // 对于编辑模式，优先使用parameters字段中的完整路径
                 if (job.parameters) {
                     try {
-                        // 确保参数是对象格式
+                        const parameters = typeof job.parameters === 'string' ? JSON.parse(job.parameters) : job.parameters;
+                        const fullJobPaths = Object.keys(parameters);
+                        
+                        // 使用完整路径设置选中的任务
+                        fullJobPaths.forEach(fullPath => {
+                            selectedJobs.edit.add(fullPath);
+                        });
+                    } catch (error) {
+                        console.error('解析现有任务参数失败:', error);
+                        // 回退到使用项目名
+                        jobNames.forEach(jobName => {
+                            selectedJobs.edit.add(jobName);
+                        });
+                    }
+                } else {
+                    // 如果没有parameters，使用项目名
+                    jobNames.forEach(jobName => {
+                        selectedJobs.edit.add(jobName);
+                    });
+                }
+                
+                // 更新UI显示
+                updateSelectedJobsPreview('edit');
+                
+                // 更新任务列表中的选中状态
+                document.querySelectorAll('.job-item').forEach(item => {
+                    const jobName = item.getAttribute('data-job-name');
+                    if (selectedJobs.edit.has(jobName)) {
+                        item.classList.add('selected');
+                    } else {
+                        item.classList.remove('selected');
+                    }
+                });
+                
+                // 加载多任务参数
+                await loadSelectedJobsParameters();
+                
+                // 确保多任务参数正确回显
+                if (job.parameters) {
+                    try {
                         const parameters = typeof job.parameters === 'string' ? JSON.parse(job.parameters) : job.parameters;
                         setTimeout(() => {
-                            fillJobParametersModal(parameters);
-                        }, 100);
+                            // 检查是否是多任务参数格式（每个任务有独立参数）
+                            // 使用selectedJobs.edit中的完整路径进行检查
+                            const isMultiJobParams = typeof parameters === 'object' &&
+                                Array.from(selectedJobs.edit).some(fullPath => parameters.hasOwnProperty(fullPath));
+                            
+                            if (isMultiJobParams) {
+                                // 多任务独立参数回显
+                                fillMultiJobParametersModal(parameters);
+                            } else {
+                                // 兼容旧格式的统一参数回显
+                                fillJobParametersModal(parameters);
+                            }
+                        }, 1500);
                     } catch (error) {
-                        console.error('参数解析失败:', error);
+                        console.error('多任务参数回显失败:', error);
                     }
                 }
             }
@@ -1783,7 +2827,21 @@ async function executeJobNow(jobId) {
         // 调用API立即执行任务
         const response = await API.post(`/api/scheduled-jobs/${jobId}/execute`);
         
-        showNotification(response.message || '任务已成功提交执行', 'success');
+        // 显示多任务执行结果
+        if (response.totalJobs && response.totalJobs > 1) {
+            const successCount = response.successCount || 0;
+            const failedCount = response.failedCount || 0;
+            
+            if (successCount === response.totalJobs) {
+                showNotification(`${response.message} (${successCount}/${response.totalJobs} 成功)`, 'success');
+            } else if (successCount > 0) {
+                showNotification(`${response.message} (${successCount}/${response.totalJobs} 成功, ${failedCount} 失败)`, 'warning');
+            } else {
+                showNotification(`${response.message} (${failedCount}/${response.totalJobs} 失败)`, 'error');
+            }
+        } else {
+            showNotification(response.message || '任务已成功提交执行', 'success');
+        }
         
         // 刷新任务列表以更新最后执行时间
         setTimeout(() => {
@@ -1802,3 +2860,4 @@ async function executeJobNow(jobId) {
         });
     }
 }
+

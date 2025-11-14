@@ -212,9 +212,34 @@
                     
                     <div class="form-group">
                         <label for="jenkins-job-select-modal">Jenkins任务</label>
-                        <select id="jenkins-job-select-modal" name="jenkins_job_name" required>
-                            <option value="">请先选择Jenkins配置</option>
-                        </select>
+                        <div class="multi-job-selector-container">
+                            <div class="job-selection-controls">
+                                <div class="search-control">
+                                    <input type="text" id="job-search-input" placeholder="搜索Jenkins任务..." class="search-input">
+                                    <span class="search-icon">🔍</span>
+                                </div>
+                                <div class="selection-info">
+                                    <span class="selected-count">已选择: <strong id="selected-job-count">0</strong></span>
+                                </div>
+                            </div>
+                            <div class="jobs-list-container" id="jobs-list-container">
+                                <!-- 动态加载任务列表 -->
+                                <div class="loading-state">
+                                    <div class="spinner"></div>
+                                    <span>加载任务中...</span>
+                                </div>
+                            </div>
+                            <div class="selected-jobs-preview" id="selected-jobs-preview" style="display: none;">
+                                <div class="preview-header">
+                                    <h4>已选任务</h4>
+                                    <button type="button" class="btn-clear" onclick="clearSelectedJobs()">清空</button>
+                                </div>
+                                <div class="selected-tags" id="selected-tags">
+                                    <!-- 动态显示选中的任务标签 -->
+                                </div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="selected-jobs-data" name="jenkins_jobs">
                     </div>
                     
                     <div class="form-group">
@@ -281,9 +306,39 @@
                     </div>
                     
                     <div class="form-group">
-                        <label for="edit-jenkins-job-select">Jenkins任务</label>
-                        <select id="edit-jenkins-job-select" name="jenkins_job_name" required>
-                            <option value="">请先选择Jenkins配置</option>
+                        <label>Jenkins任务</label>
+                        <div class="multi-job-selector-container">
+                            <div class="job-selection-controls">
+                                <div class="search-control">
+                                    <input type="text" id="edit-job-search-input" placeholder="搜索任务..." class="search-input">
+                                    <div class="search-icon">🔍</div>
+                                </div>
+                                <div class="selection-actions">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="clearSelectedJobs()">清空</button>
+                                </div>
+                            </div>
+                            
+                            <div class="jobs-list-container" id="edit-jobs-list-container">
+                                <div class="empty-state">
+                                    <div class="empty-icon">📋</div>
+                                    <p>请先选择Jenkins配置</p>
+                                </div>
+                            </div>
+                            
+                            <div class="selected-jobs-preview" id="edit-selected-jobs-preview" style="display: none;">
+                                <div class="selected-header">
+                                    <span>已选择 <span id="edit-selected-job-count">0</span> 个任务</span>
+                                </div>
+                                <div class="selected-tags" id="edit-selected-tags">
+                                    <!-- 动态生成选中任务的标签 -->
+                                </div>
+                            </div>
+                            
+                            <input type="hidden" id="edit-selected-jobs-data" name="jenkins_jobs">
+                        </div>
+                        <!-- 单任务选择器（向后兼容） -->
+                        <select id="edit-jenkins-job-select" name="jenkins_job_name" style="display: none;">
+                            <option value="">请选择Jenkins任务</option>
                         </select>
                     </div>
                     

@@ -328,7 +328,7 @@ async function loadDashboardData() {
         const configs = await API.get('/api/jenkins-configs');
         
         const totalJobs = jobs.length;
-        const activeJobs = jobs.filter(job => job.status === 'active').length;
+        const activeJobs = jobs.filter(job => (job.actual_status || job.status) === 'active').length;
         const totalConfigs = configs.length;
         
         const totalJobsElement = document.getElementById('total-jobs');
@@ -732,18 +732,196 @@ function setupExecutionTypeToggle() {
 }
 
 // 任务列表管理
-async function loadJobList() {
+let allJobs = []; // 存储所有任务
+let currentCategory = 'pending'; // 当前选中的分类
+let filteredJobs = []; // 当前显示的任务
+
+async function loadJobList(forceShowPending = true) {
     try {
+        console.log('开始加载任务列表...', forceShowPending ? '(强制显示待执行)' : '(保持当前分类)');
         const jobs = await API.get('/api/scheduled-jobs');
-        const jobTableBody = document.getElementById('job-table-body');
+        console.log('从API获取到的任务数量:', jobs.length);
+        console.log('任务数据示例:', jobs.slice(0, 2).map(j => ({name: j.name, category: j.category, actual_status: j.actual_status})));
         
-        if (!jobTableBody) return;
+        allJobs = jobs; // 存储所有任务
         
-        if (jobs.length === 0) {
-            jobTableBody.innerHTML = '<tr><td colspan="7" style="text-align: center;">暂无任务</td></tr>';
-            return;
+        // 预处理 jobs 数据，确保 jenkins_jobs 是一个解析后的数组
+        allJobs = allJobs.map(job => {
+            // 如果 jenkins_jobs 不是数组，尝试处理
+            if (!Array.isArray(job.jenkins_jobs)) {
+                if (typeof job.jenkins_jobs === 'string') {
+                    try {
+                        // 后端已经处理过转义符，直接解析即可
+                        job.jenkins_jobs = JSON.parse(job.jenkins_jobs);
+                    } catch (e) {
+                        console.error('解析 jenkins_jobs 失败:', e);
+                        job.jenkins_jobs = []; // 解析失败则设置为空数组
+                    }
+                } else {
+                    job.jenkins_jobs = []; // 不是字符串也不是数组，设置为空数组
+                }
+            }
+            return job;
+        });
+        
+        // 更新标签页计数
+        updateTabCounts();
+        
+        if (forceShowPending) {
+            // 进入任务管理标签页时，总是显示待执行任务
+            // 重置当前分类为pending并切换到待执行标签页
+            console.log('准备切换到待执行标签页...');
+            currentCategory = 'pending';
+            switchJobTab('pending');
+        } else {
+            // 保持当前分类，应用筛选
+            console.log('保持当前分类:', currentCategory);
+            applyFiltersAndSort();
         }
         
+    } catch (error) {
+        console.error('加载任务列表失败:', error);
+        showNotification('加载任务列表失败: ' + error.message, 'error');
+    }
+}
+
+// 更新标签页计数
+function updateTabCounts() {
+    const counts = {
+        pending: 0,
+        executed: 0,
+        expired: 0
+    };
+    
+    allJobs.forEach(job => {
+        const category = job.category || 'pending';
+        counts[category]++;
+        
+        // 调试日志
+        console.log(`前端任务 ${job.name}: 分类=${job.category}, 实际状态=${job.actual_status}`);
+    });
+    
+    // 更新显示
+    document.getElementById('pending-count').textContent = counts.pending;
+    document.getElementById('executed-count').textContent = counts.executed;
+    document.getElementById('expired-count').textContent = counts.expired;
+}
+
+// 切换标签页
+function switchJobTab(category) {
+    console.log('切换标签页到:', category);
+    currentCategory = category;
+    
+    // 更新标签页样式
+    document.querySelectorAll('.job-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelector(`[data-category="${category}"]`).classList.add('active');
+    
+    // 重置筛选器
+    document.getElementById('status-filter').value = '';
+    document.getElementById('sort-select').value = 'created_at-desc';
+    
+    // 应用筛选和排序
+    applyFiltersAndSort();
+}
+
+// 应用筛选和排序
+function applyFiltersAndSort() {
+    console.log('应用筛选和排序, 当前分类:', currentCategory, '总任务数:', allJobs.length);
+    
+    // 先按分类筛选
+    filteredJobs = allJobs.filter(job => (job.category || 'pending') === currentCategory);
+    console.log('分类筛选后的任务数:', filteredJobs.length);
+    console.log('筛选后的任务:', filteredJobs.map(j => ({name: j.name, category: j.category})));
+    
+    // 再按状态筛选
+    const statusFilter = document.getElementById('status-filter').value;
+    if (statusFilter) {
+        filteredJobs = filteredJobs.filter(job => 
+            (job.actual_status || job.status) === statusFilter
+        );
+        console.log('状态筛选后的任务数:', filteredJobs.length);
+    }
+    
+    // 应用排序
+    applySorting();
+    
+    // 渲染任务列表
+    renderJobList();
+}
+
+// 应用排序
+function applySorting() {
+    const sortValue = document.getElementById('sort-select').value;
+    const [field, direction] = sortValue.split('-');
+    
+    filteredJobs.sort((a, b) => {
+        let aValue = a[field];
+        let bValue = b[field];
+        
+        // 处理特殊字段
+        if (field === 'name') {
+            aValue = aValue.toLowerCase();
+            bValue = bValue.toLowerCase();
+        } else if (field === 'next_execution' || field === 'created_at') {
+            aValue = aValue ? new Date(aValue).getTime() : 0;
+            bValue = bValue ? new Date(bValue).getTime() : 0;
+        }
+        
+        if (direction === 'asc') {
+            return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+        } else {
+            return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
+        }
+    });
+}
+
+// 渲染任务列表
+function renderJobList() {
+    const jobTableBody = document.getElementById('job-table-body');
+    const emptyState = document.getElementById('empty-state');
+    const jobTable = document.getElementById('job-table');
+    
+    if (!jobTableBody || !jobTable || !emptyState) {
+        console.error('缺少必要的DOM元素');
+        return;
+    }
+    
+    const jobs = filteredJobs || [];
+    
+    if (jobs.length === 0) {
+        // 显示空状态
+        jobTable.style.display = 'none';
+        emptyState.style.display = 'block';
+        
+        // 更新空状态文案
+        const emptyTitle = document.getElementById('empty-title');
+        const emptyMessage = document.getElementById('empty-message');
+        
+        const titles = {
+            pending: '暂无待执行任务',
+            executed: '暂无已执行任务',
+            expired: '暂无已过期任务'
+        };
+        
+        const messages = {
+            pending: '当前没有需要执行的任务',
+            executed: '当前没有已执行完成的任务',
+            expired: '当前没有已过期的任务'
+        };
+        
+        if (emptyTitle) emptyTitle.textContent = titles[currentCategory];
+        if (emptyMessage) emptyMessage.textContent = messages[currentCategory];
+        
+        return;
+    }
+    
+    // 显示表格
+    jobTable.style.display = 'table';
+    emptyState.style.display = 'none';
+    
+    try {
         // 预处理 jobs 数据，确保 jenkins_jobs 是一个解析后的数组
         const processedJobs = jobs.map(job => {
             // 如果 jenkins_jobs 不是数组，尝试处理
@@ -781,7 +959,6 @@ async function loadJobList() {
                     const labels = displayJobs.map((name, index) => {
                         const jobParameters = getJobParametersForDisplay(job, name);
                         const parametersStr = JSON.stringify(jobParameters);
-                        console.log(`生成标签 ${index + 1}: ${name}, 参数:`, jobParameters);
                         return `<span class="job-label" data-job-id="${job.id}" data-job-name="${name}" data-parameters='${parametersStr}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${name}</span>`;
                     }).join('');
                     
@@ -825,25 +1002,36 @@ async function loadJobList() {
                 <td>${job.execute_once ? '一次性' : '周期性'}</td>
                 <td>${job.execute_once ? formatDateTime(job.execute_time) : job.cron_expression}</td>
                 <td>
-                    <span class="status-badge status-${job.status}">${getStatusText(job.status)}</span>
+                    <span class="status-badge status-${job.actual_status || job.status}">${getStatusText(job.actual_status || job.status)}</span>
                 </td>
                 <td>
                     <div class="action-buttons">
                         <button class="btn btn-info" onclick="executeJobNow(${job.id})">执行</button>
                         <button class="btn btn-secondary" onclick="openEditJobModal(${job.id})">编辑</button>
                         <button class="btn btn-danger" onclick="deleteJob(${job.id})">删除</button>
-                        ${job.status === 'active' ?
+                        ${(job.actual_status || job.status) === 'active' ?
                             `<button class="btn btn-warning" onclick="toggleJobStatus(${job.id}, 'inactive')">暂停</button>` :
                             `<button class="btn btn-success" onclick="toggleJobStatus(${job.id}, 'active')">启动</button>`}
                     </div>
                 </td>
             </tr>
-        `}).join('');
+        `;
+        }).join('');
         
     } catch (error) {
         console.error('加载任务列表失败:', error);
         showNotification('加载任务列表失败: ' + error.message, 'error');
     }
+}
+
+// 筛选任务
+function filterJobs() {
+    applyFiltersAndSort();
+}
+
+// 排序任务
+function sortJobs() {
+    applyFiltersAndSort();
 }
 
 function formatNextExecution(job) {
@@ -1097,7 +1285,7 @@ async function deleteJob(jobId) {
     try {
         await API.delete(`/api/scheduled-jobs/${jobId}`);
         showNotification('定时任务删除成功', 'success');
-        loadJobList();
+        await loadJobList(); // loadJobList内部会处理标签页切换
     } catch (error) {
         showNotification('删除失败: ' + error.message, 'error');
     }
@@ -1113,8 +1301,8 @@ async function editJob(jobId) {
     openEditJobModal(jobId);
 }
 
-function refreshJobList() {
-    loadJobList();
+async function refreshJobList() {
+    await loadJobList(false); // 保持当前分类
 }
 
 // 表单提交处理
@@ -1332,6 +1520,9 @@ window.testJenkinsConnection = testJenkinsConnection;
 window.toggleJobStatus = toggleJobStatus;
 window.executeJobNow = executeJobNow;
 window.hideJobParametersTooltip = hideJobParametersTooltip;
+window.switchJobTab = switchJobTab;
+window.filterJobs = filterJobs;
+window.sortJobs = sortJobs;
 
 // 应用初始化
 document.addEventListener('DOMContentLoaded', async function() {
@@ -2722,7 +2913,7 @@ function initModalForms() {
             await API.post('/api/scheduled-jobs', data);
             showNotification('定时任务创建成功', 'success');
             closeCreateJobModal();
-            loadJobList(); // 刷新任务列表
+            await loadJobList(); // loadJobList内部会处理标签页切换
         } catch (error) {
             showNotification('创建失败: ' + error.message, 'error');
         } finally {
@@ -2853,7 +3044,7 @@ function initModalForms() {
             console.log('更新响应:', response);
             showNotification('定时任务更新成功', 'success');
             closeEditJobModal();
-            loadJobList(); // 刷新任务列表
+            await loadJobList(); // loadJobList内部会处理标签页切换
         } catch (error) {
             console.error('更新任务失败:', error);
             showNotification('更新失败: ' + error.message, 'error');
@@ -3038,8 +3229,11 @@ async function toggleJobStatus(jobId, newStatus) {
     try {
         await API.put(`/api/scheduled-jobs/${jobId}/status`, { status: newStatus });
         
-        // 更新成功后刷新任务列表
-        await loadJobList();
+        // 更新成功后刷新任务列表（保持当前分类）
+        await loadJobList(false);
+        
+        // 暂停/启动任务不应该改变任务分类，所以不需要切换标签页
+        // 只有执行任务或删除任务才可能需要切换标签页
         
         const statusText = newStatus === 'active' ? '启动' : '暂停';
         showNotification(`任务${statusText}成功`, 'success');
@@ -3089,8 +3283,16 @@ async function executeJobNow(jobId) {
         }
         
         // 刷新任务列表以更新最后执行时间
-        setTimeout(() => {
-            loadJobList();
+        setTimeout(async () => {
+            // 刷新任务列表（保持当前分类）
+            await loadJobList(false);
+            
+            // 检查任务是否需要切换标签页（比如从待执行变为已执行）
+            const updatedJob = allJobs.find(job => job.id === jobId);
+            if (updatedJob && updatedJob.category !== currentCategory) {
+                // 任务分类改变了，切换到新的分类
+                switchJobTab(updatedJob.category);
+            }
         }, 1000);
         
     } catch (error) {

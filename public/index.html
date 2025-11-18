@@ -132,6 +132,48 @@
                     </div>
                 </div>
                 
+                <!-- 任务分类标签页 -->
+                <div class="job-tabs-container">
+                    <div class="job-tabs">
+                        <button class="job-tab active" data-category="pending" onclick="switchJobTab('pending')">
+                            <span class="tab-title">待执行</span>
+                            <span class="tab-count" id="pending-count">0</span>
+                        </button>
+                        <button class="job-tab" data-category="executed" onclick="switchJobTab('executed')">
+                            <span class="tab-title">已执行</span>
+                            <span class="tab-count" id="executed-count">0</span>
+                        </button>
+                        <button class="job-tab" data-category="expired" onclick="switchJobTab('expired')">
+                            <span class="tab-title">已过期</span>
+                            <span class="tab-count" id="expired-count">0</span>
+                        </button>
+                    </div>
+                    
+                    <!-- 筛选和排序 -->
+                    <div class="job-controls">
+                        <div class="filter-group">
+                            <label for="status-filter">状态筛选:</label>
+                            <select id="status-filter" onchange="filterJobs()">
+                                <option value="">全部状态</option>
+                                <option value="active">活跃</option>
+                                <option value="inactive">已暂停</option>
+                                <option value="expired">已过期</option>
+                            </select>
+                        </div>
+                        <div class="sort-group">
+                            <label for="sort-select">排序:</label>
+                            <select id="sort-select" onchange="sortJobs()">
+                                <option value="created_at-desc">创建时间 (新到旧)</option>
+                                <option value="created_at-asc">创建时间 (旧到新)</option>
+                                <option value="name-asc">名称 (A-Z)</option>
+                                <option value="name-desc">名称 (Z-A)</option>
+                                <option value="next_execution-asc">下次执行 (近到远)</option>
+                                <option value="next_execution-desc">下次执行 (远到近)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
                 <div class="job-list-container">
                     <table class="job-table" id="job-table">
                         <thead>
@@ -149,6 +191,13 @@
                             <!-- 动态加载任务列表 -->
                         </tbody>
                     </table>
+                    
+                    <!-- 空状态提示 -->
+                    <div id="empty-state" class="empty-state" style="display: none;">
+                        <div class="empty-icon">📋</div>
+                        <h3 id="empty-title">暂无任务</h3>
+                        <p id="empty-message">当前分类下没有找到任务</p>
+                    </div>
                 </div>
             </section>
         </main>

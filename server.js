@@ -1289,8 +1289,9 @@ app.get('/api/scheduled-jobs', authenticateToken, async (req, res) => {
         
         const rows = await dbManager.query(sql);
         
-        // 处理多任务数据
-        const processedRows = rows.map(row => {
+        // 处理多任务数据和动态状态
+        const processedRows = [];
+        for (const row of rows) {
             let jenkins_jobs = [];
             let parameters = row.parameters;
             try {
@@ -1315,11 +1316,92 @@ app.get('/api/scheduled-jobs', authenticateToken, async (req, res) => {
                 }
             }
             
-            return {
+            // 动态判断任务的实际状态和分类 - 简化但正确的实现
+            let actualStatus = row.status;
+            let category = 'pending'; // 默认分类：待执行
+            const now = new Date();
+            
+            if (row.status === 'active' || row.status === 'inactive') {
+                if (row.execute_once === 1 && row.execute_time) {
+                    // 一次性任务
+                    const executeTime = new Date(row.execute_time);
+                    
+                    if (executeTime <= now) {
+                        // 执行时间已过，检查是否有执行历史
+                        const hasHistory = await checkExecutionHistory(row.id);
+                        
+                        if (hasHistory) {
+                            category = 'executed'; // 已执行
+                        } else {
+                            actualStatus = 'expired'; // 已过期
+                            category = 'expired'; // 已过期
+                        }
+                    } else {
+                        category = 'pending'; // 待执行
+                    }
+                } else if (row.execute_once === 0 && row.cron_expression) {
+                    // 周期任务 - 检查是否应该归类为已执行
+                    const hasHistory = await checkExecutionHistory(row.id);
+                    
+                    if (hasHistory) {
+                        // 有执行历史的周期任务，检查最后一次执行时间
+                        const lastExecution = await getLastExecutionTime(row.id);
+                        if (lastExecution) {
+                            const lastTime = new Date(lastExecution);
+                            // 如果最后一次执行在最近的一个周期内，归类为已执行
+                            // 否则仍然归类为待执行（等待下次执行）
+                            const timeSinceLastExecution = now - lastTime;
+                            const oneDay = 24 * 60 * 60 * 1000;
+                            
+                            if (timeSinceLastExecution < oneDay) {
+                                category = 'executed'; // 最近执行过
+                            } else {
+                                category = 'pending'; // 等待下次执行
+                            }
+                        } else {
+                            category = 'pending'; // 等待下次执行
+                        }
+                    } else {
+                        category = 'pending'; // 从未执行过，等待执行
+                    }
+                    
+
+                } else {
+                    // 没有执行时间的任务，归类为待执行
+                    category = 'pending';
+                }
+            } else {
+                // 其他状态的任务，需要特殊处理
+                if (row.status === 'expired') {
+                    // 对于expired状态的任务，也要检查是否有执行历史
+                    if (row.execute_once === 1 && row.execute_time) {
+                        const hasHistory = await checkExecutionHistory(row.id);
+                        if (hasHistory) {
+                            category = 'executed'; // 有执行历史则归类为已执行
+                        } else {
+                            category = 'expired'; // 无执行历史则保持已过期
+                        }
+                    } else {
+                        category = 'expired';
+                    }
+                } else {
+                    category = 'pending';
+                }
+            }
+            
+
+            
+            processedRows.push({
                 ...row,
-                jenkins_jobs: jenkins_jobs
-            };
-        });
+                jenkins_jobs: jenkins_jobs,
+                actual_status: actualStatus,
+                category: category // 添加分类字段
+            });
+            
+
+        }
+        
+
         
         res.json(processedRows);
     } catch (error) {
@@ -1327,6 +1409,31 @@ app.get('/api/scheduled-jobs', authenticateToken, async (req, res) => {
         res.status(500).json({ error: '获取定时任务失败' });
     }
 });
+
+// 检查任务是否有执行历史
+async function checkExecutionHistory(jobId) {
+    try {
+        const sql = "SELECT COUNT(*) as count FROM execution_history WHERE job_id = ? AND status IN ('success', 'completed', 'failed', 'partial_success')";
+        const result = await dbManager.get(sql, [jobId]);
+        return result.count > 0;
+    } catch (error) {
+        console.error('检查执行历史失败:', error);
+        return false;
+    }
+}
+
+// 获取任务最后一次执行时间
+async function getLastExecutionTime(jobId) {
+    try {
+        // 使用start_time字段，只获取已完成的执行记录
+        const sql = "SELECT start_time FROM execution_history WHERE job_id = ? AND status IN ('success', 'completed', 'failed', 'partial_success') ORDER BY start_time DESC LIMIT 1";
+        const result = await dbManager.get(sql, [jobId]);
+        return result ? result.start_time : null;
+    } catch (error) {
+        console.error('获取最后执行时间失败:', error);
+        return null;
+    }
+}
 
 // 获取单个定时任务详情
 app.get('/api/scheduled-jobs/:id', authenticateToken, async (req, res) => {

@@ -29,6 +29,27 @@ class DatabaseManager {
         this.isConnected = false;
     }
 
+    /**
+     * 根据数据库类型格式化时间
+     * @param {Date} date - 日期对象，默认为当前时间
+     * @returns {string} 格式化后的时间字符串
+     */
+    formatDateTime(date = new Date()) {
+        if (this.dbType === 'mysql') {
+            // MySQL 使用 YYYY-MM-DD HH:MM:SS 格式
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        } else {
+            // SQLite 和其他数据库使用 ISO 格式
+            return date.toISOString();
+        }
+    }
+
     async connect() {
         try {
             console.log(`正在连接数据库 - 类型: ${this.dbType}`);
@@ -318,15 +339,17 @@ class DatabaseManager {
                     
                     // 执行历史表
                     `CREATE TABLE IF NOT EXISTS execution_history (
-                        id INTEGER PRIMARY KEY AUTO_INCREMENT,
-                        job_id INTEGER,
-                        jenkins_build_number INTEGER,
-                        status VARCHAR(50),
-                        start_time DATETIME,
-                        end_time DATETIME,
-                        log_output TEXT,
-                        FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id)
-                    )`,
+                        id int(11) NOT NULL AUTO_INCREMENT,
+                        job_id int(11) NULL DEFAULT NULL,
+                        jenkins_build_number int(11) NULL DEFAULT NULL,
+                        status varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL DEFAULT NULL,
+                        start_time datetime NULL DEFAULT NULL,
+                        end_time datetime NULL DEFAULT NULL,
+                        log_output text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
+                        PRIMARY KEY (id) USING BTREE,
+                        INDEX job_id(job_id) USING BTREE,
+                        FOREIGN KEY (job_id) REFERENCES scheduled_jobs (id) ON DELETE RESTRICT ON UPDATE RESTRICT
+                    ) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_bin ROW_FORMAT = Dynamic`,
                     
                     // 用户表
                     `CREATE TABLE IF NOT EXISTS users (
@@ -492,7 +515,9 @@ class JenkinsAPI {
                 jobPath = `${encodeURIComponent(jobName)}`;
             }
             
-            const fullUrl = `${this.baseURL}/job/${jobPath}/api/json`;
+            // 确保baseURL不以斜杠结尾
+            const baseURL = this.baseURL.replace(/\/+$/g, '');
+            const fullUrl = `${baseURL}/job/${jobPath}/api/json`;
             console.log(`尝试访问Jenkins URL: ${fullUrl}`);
             console.log(`原始jobName: ${jobName}`);
             console.log(`处理后jobPath: ${jobPath}`);
@@ -560,7 +585,7 @@ class JenkinsAPI {
                 jobPath = parts.map(part => encodeURIComponent(part)).join('/job/');
             } else {
                 // 单个任务名
-                jobPath = `job/${encodeURIComponent(jobName)}`;
+                jobPath = `${encodeURIComponent(jobName)}`;
             }
             
             console.log(`原始jobName: ${jobName}, 处理后jobPath: ${jobPath}`);
@@ -597,7 +622,7 @@ class JenkinsAPI {
             
             // 对于Jenkins CSRF保护，可能需要添加crumb
             try {
-                const crumbResponse = await axios.get(`${this.baseURL}/crumbIssuer/api/json`, {
+                const crumbResponse = await axios.get(`${baseURL}/crumbIssuer/api/json`, {
                     auth: this.auth
                 });
                 if (crumbResponse.data && crumbResponse.data.crumb) {
@@ -641,7 +666,9 @@ class JenkinsAPI {
 
     async getJobsRecursive(path = '') {
         try {
-            const url = path ? `${this.baseURL}/job/${path}/api/json` : `${this.baseURL}/api/json`;
+            // 确保baseURL不以斜杠结尾
+            const baseURL = this.baseURL.replace(/\/+$/g, '');
+            const url = path ? `${baseURL}/job/${path}/api/json` : `${baseURL}/api/json`;
             
             const config = {};
             if (this.auth.username && this.auth.password) {
@@ -660,7 +687,7 @@ class JenkinsAPI {
                     const subJobs = await this.getJobsRecursive(folderPath);
                     // 为子任务添加文件夹路径信息
                     subJobs.forEach(job => {
-                        job.fullName = folderPath + '/job/' + job.name;
+                        // job.fullName 已经在递归调用中正确设置，不需要修改
                         job.displayName = folderPath + '/' + job.name;
                         job.folderPath = folderPath;
                     });
@@ -761,27 +788,42 @@ class CronJobManager {
             // 执行任务构建
             const buildResults = await this.executeJobBuild(job, jenkins);
             
-            // 记录执行历史
+            // 记录执行历史 - 开始执行
             console.log(`正在记录执行历史 - 任务ID: ${job.id}, 状态: started`);
             const historyResult = await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
-                [job.id, 'started', new Date().toISOString()]);
+                [job.id, 'started', dbManager.formatDateTime()]);
             console.log(`执行历史记录插入结果:`, historyResult);
 
             // 更新任务状态
             await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
-                [new Date().toISOString(), job.id]);
+                [dbManager.formatDateTime(), job.id]);
             
             // 统计执行结果
             const successCount = buildResults.filter(r => r.status === 'success').length;
             const failedCount = buildResults.filter(r => r.status === 'failed').length;
+            const totalJobs = buildResults.length;
             
-            if (successCount === buildResults.length) {
-                console.log(`任务 ${job.name} 所有${buildResults.length}个子任务执行成功`);
+            // 记录执行完成状态
+            let finalStatus = 'success';
+            let logOutput = '';
+            
+            if (successCount === totalJobs) {
+                finalStatus = 'success';
+                logOutput = `任务 ${job.name} 所有${totalJobs}个子任务执行成功`;
+                console.log(logOutput);
             } else if (successCount > 0) {
-                console.log(`任务 ${job.name} 执行结果: ${successCount}个成功, ${failedCount}个失败`);
+                finalStatus = 'partial_success';
+                logOutput = `任务 ${job.name} 执行结果: ${successCount}个成功, ${failedCount}个失败`;
+                console.log(logOutput);
             } else {
-                console.log(`任务 ${job.name} 所有${buildResults.length}个子任务执行失败`);
+                finalStatus = 'failed';
+                logOutput = `任务 ${job.name} 所有${totalJobs}个子任务执行失败`;
+                console.log(logOutput);
             }
+            
+            // 更新执行历史记录为完成状态
+            await dbManager.run(`UPDATE execution_history SET status = ?, end_time = ?, log_output = ? WHERE job_id = ? AND status = 'started'`,
+                [finalStatus, dbManager.formatDateTime(), logOutput, job.id]);
             
         } catch (error) {
             console.error(`任务 ${job.name} 执行失败:`, error.message);
@@ -789,7 +831,7 @@ class CronJobManager {
             
             // 记录执行失败
             await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
-                [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
+                [job.id, 'failed', dbManager.formatDateTime(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
         }
     }
 
@@ -1420,29 +1462,46 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
             // 使用统一的执行函数
             const buildResults = await cronManager.executeJobBuild(job, jenkins);
             
-            // 记录执行历史
+            // 记录执行历史 - 开始执行
             console.log(`立即执行任务 - 正在记录执行历史 - 任务ID: ${job.id}, 状态: started`);
             const historyResult = await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time) VALUES (?, ?, ?)`,
-                [job.id, 'started', new Date().toISOString()]);
+                [job.id, 'started', dbManager.formatDateTime()]);
             console.log(`立即执行任务 - 执行历史记录插入结果:`, historyResult);
 
             // 更新任务状态
             await dbManager.run("UPDATE scheduled_jobs SET last_execution = ? WHERE id = ?",
-                [new Date().toISOString(), job.id]);
+                [dbManager.formatDateTime(), job.id]);
             
             // 统计执行结果
             const successCount = buildResults.filter(r => r.status === 'success').length;
             const failedCount = buildResults.filter(r => r.status === 'failed').length;
             const totalJobs = buildResults.length;
             
+            // 记录执行完成状态
+            let finalStatus = 'success';
+            let logOutput = '';
             let message = '';
+            
             if (successCount === totalJobs) {
+                finalStatus = 'success';
+                logOutput = `任务 ${job.name} 所有${totalJobs}个子任务执行成功`;
                 message = `所有${totalJobs}个任务已成功提交执行`;
+                console.log(logOutput);
             } else if (successCount > 0) {
+                finalStatus = 'partial_success';
+                logOutput = `任务 ${job.name} 执行结果: ${successCount}个成功, ${failedCount}个失败`;
                 message = `${successCount}个任务成功执行，${failedCount}个任务执行失败`;
+                console.log(logOutput);
             } else {
+                finalStatus = 'failed';
+                logOutput = `任务 ${job.name} 所有${totalJobs}个子任务执行失败`;
                 message = `所有${totalJobs}个任务执行失败`;
+                console.log(logOutput);
             }
+            
+            // 更新执行历史记录为完成状态
+            await dbManager.run(`UPDATE execution_history SET status = ?, end_time = ?, log_output = ? WHERE job_id = ? AND status = 'started'`,
+                [finalStatus, dbManager.formatDateTime(), logOutput, job.id]);
             
             res.json({
                 message: message,
@@ -1457,7 +1516,7 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
             
             // 记录执行失败
             await dbManager.run(`INSERT INTO execution_history (job_id, status, start_time, log_output) VALUES (?, ?, ?, ?)`,
-                [job.id, 'failed', new Date().toISOString(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
+                [job.id, 'failed', dbManager.formatDateTime(), `错误详情: ${error.message}\n堆栈: ${error.stack}`]);
             
             res.status(500).json({ error: '任务执行失败: ' + error.message });
         }

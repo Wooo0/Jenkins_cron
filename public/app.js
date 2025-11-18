@@ -368,16 +368,18 @@ async function loadRecentActivity() {
         activityList.innerHTML = recentHistory.map(item => `
             <div class="recent-activity-item">
                 <div class="activity-header">
-                    <strong>任务 #${item.job_id}</strong>
+                    <strong>${item.job_name || `任务 #${item.job_id}`}</strong>
                     <span class="status-badge status-${item.status}">${getStatusText(item.status)}</span>
                 </div>
                 <div class="time">${formatDateTime(item.start_time)}</div>
-                ${item.log_output ? `<div class="log">${item.log_output.substring(0, 100)}${item.log_output.length > 100 ? '...' : ''}</div>` : ''}
+                ${item.log_output ? `<div class="log">${item.log_output}</div>` : ''}
+                ${item.end_time ? `<div class="duration">执行时长: ${calculateDuration(item.start_time, item.end_time)}</div>` : ''}
             </div>
         `).join('');
         
     } catch (error) {
         console.error('加载执行历史失败:', error);
+        activityList.innerHTML = '<p>加载执行记录失败</p>';
     }
 }
 
@@ -766,23 +768,31 @@ async function loadJobList() {
             let jobDisplay = '';
             if (job.jenkins_jobs && Array.isArray(job.jenkins_jobs)) {
                 if (job.jenkins_jobs.length === 1) {
-                    // 单任务显示
-                    jobDisplay = `<span class="job-label">${job.jenkins_jobs[0]}</span>`;
+                    // 单任务显示 - 添加参数提示
+                    const jobName = job.jenkins_jobs[0];
+                    const jobParameters = getJobParametersForDisplay(job, jobName);
+                    jobDisplay = `<span class="job-label" data-job-id="${job.id}" data-job-name="${jobName}" data-parameters='${JSON.stringify(jobParameters)}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${jobName}</span>`;
                 } else {
                     // 多任务显示 - 最多显示4个标签（2行），超出时鼠标悬浮显示
                     const maxDisplay = 4;
                     const displayJobs = job.jenkins_jobs.slice(0, maxDisplay);
                     const remainingJobs = job.jenkins_jobs.slice(maxDisplay);
                     
-                    const labels = displayJobs.map(name =>
-                        `<span class="job-label">${name}</span>`
-                    ).join('');
+                    const labels = displayJobs.map((name, index) => {
+                        const jobParameters = getJobParametersForDisplay(job, name);
+                        const parametersStr = JSON.stringify(jobParameters);
+                        console.log(`生成标签 ${index + 1}: ${name}, 参数:`, jobParameters);
+                        return `<span class="job-label" data-job-id="${job.id}" data-job-name="${name}" data-parameters='${parametersStr}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${name}</span>`;
+                    }).join('');
                     
                     let tooltipHtml = '';
                     if (remainingJobs.length > 0) {
                         tooltipHtml = `
                             <div class="job-tooltip">
-                                ${remainingJobs.map(name => `<div>${name}</div>`).join('')}
+                                ${remainingJobs.map(name => {
+                                    const jobParameters = getJobParametersForDisplay(job, name);
+                                    return `<div class="job-tooltip-item" data-job-id="${job.id}" data-job-name="${name}" data-parameters='${JSON.stringify(jobParameters)}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${name}</div>`;
+                                }).join('')}
                             </div>
                         `;
                     }
@@ -798,7 +808,9 @@ async function loadJobList() {
                 }
             } else {
                 // 回退到旧格式显示
-                jobDisplay = job.jenkins_job_name || '未知任务';
+                const jobName = job.jenkins_job_name || '未知任务';
+                const jobParameters = getJobParametersForDisplay(job, jobName);
+                jobDisplay = `<span class="job-label" data-job-id="${job.id}" data-job-name="${jobName}" data-parameters='${JSON.stringify(jobParameters)}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${jobName}</span>`;
             }
             
             return `
@@ -853,10 +865,230 @@ function getStatusText(status) {
         'started': '已开始',
         'running': '运行中',
         'success': '成功',
+        'partial_success': '部分成功',
         'error': '错误',
         'expired': '已过期'
     };
     return statusMap[status] || status;
+}
+
+// 计算执行时长
+function calculateDuration(startTime, endTime) {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const duration = end - start;
+    
+    const seconds = Math.floor(duration / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+        return `${hours}小时${minutes % 60}分钟${seconds % 60}秒`;
+    } else if (minutes > 0) {
+        return `${minutes}分钟${seconds % 60}秒`;
+    } else {
+        return `${seconds}秒`;
+    }
+}
+
+// 获取任务参数用于显示
+function getJobParametersForDisplay(job, jobName) {
+    try {
+        let parameters = {};
+        
+        console.log('获取任务参数:', jobName, '任务数据:', job);
+        
+        // 尝试从 job.parameters 字段获取参数
+        if (job.parameters) {
+            if (typeof job.parameters === 'string') {
+                parameters = JSON.parse(job.parameters);
+            } else {
+                parameters = job.parameters;
+            }
+            
+            console.log('解析后的参数:', parameters);
+            
+            // 如果是多任务格式，获取特定任务的参数
+            if (parameters[jobName]) {
+                console.log('直接找到任务参数:', jobName, parameters[jobName]);
+                return parameters[jobName];
+            }
+            
+            // 尝试通过任务名称匹配完整路径的参数键
+            const matchingKeys = Object.keys(parameters).filter(key => {
+                // 优先匹配以 /jobName 结尾的键（精确匹配）
+                if (key.endsWith('/' + jobName)) {
+                    return true;
+                }
+                // 其次匹配包含 jobName 的键（模糊匹配）
+                if (key.includes(jobName)) {
+                    return true;
+                }
+                return false;
+            });
+            
+            console.log('匹配的参数键:', matchingKeys);
+            
+            if (matchingKeys.length > 0) {
+                // 优先使用精确匹配的键
+                let matchedKey = matchingKeys.find(key => key.endsWith('/' + jobName)) || matchingKeys[0];
+                console.log('通过路径匹配找到任务参数:', jobName, matchedKey, parameters[matchedKey]);
+                return parameters[matchedKey];
+            }
+            
+            // 检查是否是旧格式的参数（没有按任务名分组）
+            if (typeof parameters === 'object' && !Array.isArray(parameters) && Object.keys(parameters).length > 0) {
+                // 如果参数不是按任务名分组的，可能是旧格式，直接返回
+                const hasTaskSpecificKeys = Object.keys(parameters).some(key => 
+                    key.includes('_') || key.toLowerCase().includes('param')
+                );
+                
+                if (hasTaskSpecificKeys && !parameters[jobName]) {
+                    console.log('使用旧格式参数:', parameters);
+                    return parameters;
+                }
+            }
+        }
+        
+        console.log('没有找到任务参数，返回空对象:', jobName);
+        return {};
+    } catch (error) {
+        console.error('解析任务参数失败:', error, '任务数据:', job);
+        return {};
+    }
+}
+
+// 显示任务参数提示
+function showJobParametersTooltip(event) {
+    const jobLabel = event.target;
+    const parametersData = jobLabel.getAttribute('data-parameters');
+    const jobName = jobLabel.getAttribute('data-job-name') || '未知任务';
+    
+    console.log('触发参数提示:', jobName, '参数数据:', parametersData);
+    
+    // 清除之前的隐藏定时器
+    if (window.tooltipHideTimer) {
+        clearTimeout(window.tooltipHideTimer);
+        window.tooltipHideTimer = null;
+    }
+    
+    // 防抖处理：如果已经有显示定时器，先清除
+    if (window.tooltipShowTimer) {
+        clearTimeout(window.tooltipShowTimer);
+        window.tooltipShowTimer = null;
+    }
+    
+    // 检查是否是同一个标签，如果是则直接显示，不需要重新创建
+    const tooltip = document.getElementById('job-parameters-tooltip');
+    if (tooltip && tooltip.style.display === 'block' && window.currentTooltipJob === jobName) {
+        // 同一个标签，只需要更新位置
+        const rect = jobLabel.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + window.scrollX}px`;
+        tooltip.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        return;
+    }
+    
+    // 使用防抖机制，避免快速移动时频繁创建提示框
+    window.tooltipShowTimer = setTimeout(() => {
+        // 即使没有参数数据也要显示提示框
+        let parameters = {};
+        if (parametersData) {
+            try {
+                parameters = JSON.parse(parametersData);
+            } catch (error) {
+                console.error('解析参数数据失败:', error, '原始数据:', parametersData);
+                parameters = {};
+            }
+        }
+        
+        console.log('解析后的参数:', parameters);
+        
+        // 创建或获取提示框
+        let tooltipElement = document.getElementById('job-parameters-tooltip');
+        if (!tooltipElement) {
+            tooltipElement = document.createElement('div');
+            tooltipElement.id = 'job-parameters-tooltip';
+            tooltipElement.className = 'job-parameters-tooltip';
+            document.body.appendChild(tooltipElement);
+        }
+        
+        // 构建参数显示内容
+        let parametersHtml = '';
+        if (!parameters || Object.keys(parameters).length === 0) {
+            parametersHtml = '<div class="no-parameters">该任务没有参数</div>';
+        } else {
+            parametersHtml = Object.entries(parameters).map(([key, value]) => {
+                const displayValue = typeof value === 'boolean' ? (value ? '是' : '否') : value;
+                return `<div class="parameter-row"><span class="param-name">${key}:</span> <span class="param-value">${displayValue}</span></div>`;
+            }).join('');
+        }
+        
+        tooltipElement.innerHTML = `
+            <div class="tooltip-header">
+                <strong>${jobName}</strong>
+                <span class="tooltip-close" onclick="hideJobParametersTooltip()">×</span>
+            </div>
+            <div class="tooltip-content">
+                <div class="parameters-title">任务参数:</div>
+                ${parametersHtml}
+            </div>
+        `;
+        
+        // 定位提示框
+        const rect = jobLabel.getBoundingClientRect();
+        tooltipElement.style.left = `${rect.left + window.scrollX}px`;
+        tooltipElement.style.top = `${rect.bottom + window.scrollY + 5}px`;
+        tooltipElement.style.display = 'block';
+        
+        // 记录当前显示的任务名称
+        window.currentTooltipJob = jobName;
+        
+        console.log('提示框已显示:', jobName);
+        window.tooltipShowTimer = null;
+    }, 30); // 减少到30ms 防抖延迟，提高响应性
+}
+
+// 隐藏任务参数提示
+function hideJobParametersTooltip() {
+    // 清除显示定时器
+    if (window.tooltipShowTimer) {
+        clearTimeout(window.tooltipShowTimer);
+        window.tooltipShowTimer = null;
+    }
+    
+    // 使用全局定时器，避免多个定时器冲突
+    window.tooltipHideTimer = setTimeout(() => {
+        const tooltip = document.getElementById('job-parameters-tooltip');
+        if (tooltip && !tooltip.matches(':hover')) {
+            tooltip.style.display = 'none';
+            // 清理当前任务记录
+            window.currentTooltipJob = null;
+        }
+        window.tooltipHideTimer = null;
+    }, 100);
+}
+
+// 初始化任务标签事件
+function initJobLabelEvents() {
+    console.log('初始化任务标签事件监听器 - 使用内联事件处理器');
+    
+    // 提示框本身的鼠标事件
+    document.addEventListener('mouseover', (event) => {
+        if (event.target.closest('#job-parameters-tooltip')) {
+            // 鼠标在提示框上时清除隐藏定时器，保持显示
+            if (window.tooltipHideTimer) {
+                clearTimeout(window.tooltipHideTimer);
+                window.tooltipHideTimer = null;
+            }
+        }
+    });
+    
+    document.addEventListener('mouseout', (event) => {
+        if (event.target.closest('#job-parameters-tooltip')) {
+            // 鼠标离开提示框时隐藏
+            hideJobParametersTooltip();
+        }
+    });
 }
 
 async function deleteJob(jobId) {
@@ -1099,6 +1331,7 @@ window.deleteJob = deleteJob;
 window.testJenkinsConnection = testJenkinsConnection;
 window.toggleJobStatus = toggleJobStatus;
 window.executeJobNow = executeJobNow;
+window.hideJobParametersTooltip = hideJobParametersTooltip;
 
 // 应用初始化
 document.addEventListener('DOMContentLoaded', async function() {
@@ -1186,6 +1419,7 @@ async function initApp() {
         initTabs();
         initForms();
         initModalForms();
+        initJobLabelEvents(); // 初始化任务标签事件
         
         // 初始化加载数据
         await Promise.all([
@@ -1608,10 +1842,16 @@ function toggleJobSelection(jobName) {
     
     updateSelectedJobsPreview(modalType);
     
-    // 更新UI状态
-    const jobItem = document.querySelector(`[data-job-name="${jobName}"]`);
+    // 更新UI状态 - 在正确的模态框中查找元素
+    const modalId = modalType === 'create' ? 'create-job-modal' : 'edit-job-modal';
+    const modal = document.getElementById(modalId);
+    const jobItem = modal.querySelector(`[data-job-name="${jobName}"]`);
     if (jobItem) {
-        jobItem.classList.toggle('selected');
+        if (selectedJobs[modalType].has(jobName)) {
+            jobItem.classList.add('selected');
+        } else {
+            jobItem.classList.remove('selected');
+        }
     }
     
     // 加载并显示选中任务的参数
@@ -1690,8 +1930,10 @@ function removeSelectedJob(jobName, modalType = 'create') {
     selectedJobs[modalType].delete(jobName);
     updateSelectedJobsPreview(modalType);
     
-    // 更新任务列表中的选中状态
-    const jobItem = document.querySelector(`[data-job-name="${jobName}"]`);
+    // 更新任务列表中的选中状态 - 在正确的模态框中查找元素
+    const modalId = modalType === 'create' ? 'create-job-modal' : 'edit-job-modal';
+    const modal = document.getElementById(modalId);
+    const jobItem = modal.querySelector(`[data-job-name="${jobName}"]`);
     if (jobItem) {
         jobItem.classList.remove('selected');
     }
@@ -1709,8 +1951,10 @@ function clearSelectedJobs(modalType = 'create') {
     selectedJobs[modalType].clear();
     updateSelectedJobsPreview(modalType);
     
-    // 清除所有任务项的选中状态
-    document.querySelectorAll('.job-item.selected').forEach(item => {
+    // 清除所有任务项的选中状态 - 在正确的模态框中查找元素
+    const modalId = modalType === 'create' ? 'create-job-modal' : 'edit-job-modal';
+    const modal = document.getElementById(modalId);
+    modal.querySelectorAll('.job-item.selected').forEach(item => {
         item.classList.remove('selected');
     });
     
@@ -2709,8 +2953,9 @@ async function openEditJobModal(jobId) {
                 // 更新UI显示
                 updateSelectedJobsPreview('edit');
                 
-                // 更新任务列表中的选中状态
-                document.querySelectorAll('.job-item').forEach(item => {
+                // 更新任务列表中的选中状态 - 在编辑模态框中查找元素
+                const editModal = document.getElementById('edit-job-modal');
+                editModal.querySelectorAll('.job-item').forEach(item => {
                     const jobName = item.getAttribute('data-job-name');
                     if (selectedJobs.edit.has(jobName)) {
                         item.classList.add('selected');

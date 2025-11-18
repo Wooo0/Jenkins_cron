@@ -1458,11 +1458,15 @@ main {
     flex: 0 0 calc(50% - 0.25rem); /* 一行两个标签，考虑gap */
     box-sizing: border-box;
     text-align: center;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
 }
 
 .job-label:hover {
     background: #dee2e6;
     border-color: #adb5bd;
+    transform: translateY(-1px);
 }
 
 .job-count-badge {
@@ -1483,13 +1487,14 @@ main {
     align-items: center;
 }
 
-/* 任务标签工具提示样式 */
+/* 任务标签工具提示样式 - 禁用CSS内置tooltip，使用JavaScript替代 */
 .job-labels-container[data-tooltip="true"] {
     position: relative;
 }
 
+/* 禁用CSS内置的hover效果，避免与JavaScript冲突 */
 .job-labels-container[data-tooltip="true"]:hover .job-tooltip {
-    display: block;
+    display: none; /* 始终隐藏CSS内置tooltip */
 }
 
 .job-tooltip {
@@ -1551,3 +1556,140 @@ main {
 .job-table th:nth-child(5) { width: 12%; } /* 下次执行 */
 .job-table th:nth-child(6) { width: 8%; }  /* 状态 */
 .job-table th:nth-child(7) { width: 28%; } /* 操作 - 增加宽度 */
+
+/* 任务参数提示框样式 */
+.job-parameters-tooltip {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    padding: 0;
+    z-index: 1000;
+    max-width: 300px;
+    min-width: 250px;
+    display: none;
+    font-size: 0.875rem;
+    pointer-events: auto; /* 确保可以接收鼠标事件 */
+    transition: opacity 0.15s ease-in-out;
+}
+
+.tooltip-header {
+    background: #f8f9fa;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 8px 8px 0 0;
+}
+
+.tooltip-header strong {
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.tooltip-close {
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    color: #6c757d;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+
+.tooltip-close:hover {
+    background: #e9ecef;
+    color: #495057;
+}
+
+.tooltip-content {
+    padding: 1rem;
+}
+
+.parameters-title {
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 0.75rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.parameter-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f8f9fa;
+}
+
+.parameter-row:last-child {
+    border-bottom: none;
+}
+
+.param-name {
+    font-weight: 500;
+    color: #495057;
+    flex: 1;
+}
+
+.param-value {
+    color: #6c757d;
+    background: #f8f9fa;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.no-parameters {
+    text-align: center;
+    color: #6c757d;
+    font-style: italic;
+    padding: 1rem 0;
+}
+
+/* 任务标签样式优化 - 已合并到上方定义 */
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .dashboard-stats {
+        grid-template-columns: 1fr;
+    }
+    
+    .tab-nav {
+        flex-direction: column;
+    }
+    
+    .action-buttons {
+        flex-direction: column;
+    }
+    
+    .job-table th,
+    .job-table td {
+        padding: 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    .config-table th,
+    .config-table td {
+        padding: 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    .job-parameters-tooltip {
+        max-width: 250px;
+        min-width: 200px;
+    }
+}

@@ -712,7 +712,8 @@ class JenkinsAPI {
 class CronJobManager {
     constructor() {
         this.jobs = new Map();
-        this.loadScheduledJobs();
+        // 不在构造函数中加载任务，避免与 app.listen 中的调用重复
+        // 任务将在服务器启动完成后由 app.listen 回调中加载
     }
 
     async loadScheduledJobs() {

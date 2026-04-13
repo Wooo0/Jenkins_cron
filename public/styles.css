@@ -239,6 +239,26 @@ main {
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     overflow: hidden;
+    max-height: calc(100vh - 350px);
+    overflow-y: auto;
+}
+
+.job-list-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.job-list-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.job-list-container::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+.job-list-container::-webkit-scrollbar-thumb:hover {
+    background: #555;
 }
 
 /* 空状态样式 */
@@ -1655,8 +1675,12 @@ main {
     display: inline-block;
 }
 
-.job-labels-container.expanded .job-more-badge {
-    display: none;
+.job-more-badge.expanded {
+    background: #28a745;
+}
+
+.job-more-badge.expanded:hover {
+    background: #218838;
 }
 
 /* 任务标签工具提示样式 */

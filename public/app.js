@@ -1004,7 +1004,6 @@ function renderJobList() {
                             ${labels}
                             ${hiddenLabels}
                             ${remainingJobs.length > 0 ? `<span class="job-more-badge" onclick="toggleJobExpand(${job.id}, event)">+${remainingJobs.length}</span>` : ''}
-                            <span class="job-count-badge">${job.jenkins_jobs.length}</span>
                         </div>
                     `;
                 }
@@ -1311,20 +1310,25 @@ function toggleJobExpand(jobId, event) {
     if (!container) return;
     
     const isExpanded = container.classList.contains('expanded');
+    const badge = container.querySelector('.job-more-badge');
     
     if (isExpanded) {
         container.classList.remove('expanded');
-        const badge = container.querySelector('.job-more-badge');
         if (badge) {
-            const hiddenCount = container.querySelectorAll('.job-label.hidden-job').length;
+            badge.classList.remove('expanded');
+            const totalJobs = container.querySelectorAll('.job-label').length;
+            const maxDisplay = 4;
+            const hiddenCount = Math.max(0, totalJobs - maxDisplay);
             badge.textContent = `+${hiddenCount}`;
-            badge.style.display = '';
+            badge.title = '点击展开所有任务';
         }
     } else {
         container.classList.add('expanded');
-        const badge = container.querySelector('.job-more-badge');
         if (badge) {
-            badge.style.display = 'none';
+            badge.classList.add('expanded');
+            const totalJobs = container.querySelectorAll('.job-label').length;
+            badge.textContent = `收起 (${totalJobs})`;
+            badge.title = '点击收起任务列表';
         }
     }
 }

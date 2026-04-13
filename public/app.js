@@ -365,17 +365,50 @@ async function loadRecentActivity() {
             .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
             .slice(0, 5);
         
-        activityList.innerHTML = recentHistory.map(item => `
-            <div class="recent-activity-item">
-                <div class="activity-header">
-                    <strong>${item.job_name || `任务 #${item.job_id}`}</strong>
-                    <span class="status-badge status-${item.status}">${getStatusText(item.status)}</span>
+        activityList.innerHTML = recentHistory.map(item => {
+            let buildDetailsHtml = '';
+            
+            // 解析构建详情
+            if (item.build_details) {
+                try {
+                    const buildDetails = typeof item.build_details === 'string' 
+                        ? JSON.parse(item.build_details) 
+                        : item.build_details;
+                    
+                    if (Array.isArray(buildDetails) && buildDetails.length > 0) {
+                        buildDetailsHtml = `
+                            <div class="build-details">
+                                <div class="build-details-title">子任务执行详情:</div>
+                                ${buildDetails.map(detail => `
+                                    <div class="build-detail-item">
+                                        <span class="build-job-name">${detail.jobName}</span>
+                                        ${detail.branch ? `<span class="build-branch" title="Git分支">${detail.branch}</span>` : ''}
+                                        ${detail.buildNumber ? `<span class="build-number" title="构建号">#${detail.buildNumber}</span>` : ''}
+                                        ${detail.buildUrl ? `<a href="${detail.buildUrl}" target="_blank" class="build-link" title="查看构建">🔗</a>` : ''}
+                                        <span class="status-badge status-${detail.status}" style="font-size: 0.65rem; padding: 0.1rem 0.3rem;">${getStatusText(detail.status)}</span>
+                                        ${detail.error ? `<span class="build-error" title="${detail.error}">❌</span>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    console.error('解析构建详情失败:', e);
+                }
+            }
+            
+            return `
+                <div class="recent-activity-item" onclick="showExecutionDetail('${item.id}')" style="cursor: pointer;">
+                    <div class="activity-header">
+                        <strong>${item.job_name || `任务 #${item.job_id}`}</strong>
+                        <span class="status-badge status-${item.status}">${getStatusText(item.status)}</span>
+                    </div>
+                    <div class="time">${formatDateTime(item.start_time)}</div>
+                    ${item.end_time ? `<div class="duration">执行时长: ${calculateDuration(item.start_time, item.end_time)}</div>` : ''}
+                    ${buildDetailsHtml}
                 </div>
-                <div class="time">${formatDateTime(item.start_time)}</div>
-                ${item.log_output ? `<div class="log">${item.log_output}</div>` : ''}
-                ${item.end_time ? `<div class="duration">执行时长: ${calculateDuration(item.start_time, item.end_time)}</div>` : ''}
-            </div>
-        `).join('');
+            `;
+        }).join('');
         
     } catch (error) {
         console.error('加载执行历史失败:', error);
@@ -951,7 +984,6 @@ function renderJobList() {
                     const jobParameters = getJobParametersForDisplay(job, jobName);
                     jobDisplay = `<span class="job-label" data-job-id="${job.id}" data-job-name="${jobName}" data-parameters='${JSON.stringify(jobParameters)}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${jobName}</span>`;
                 } else {
-                    // 多任务显示 - 最多显示4个标签（2行），超出时鼠标悬浮显示
                     const maxDisplay = 4;
                     const displayJobs = job.jenkins_jobs.slice(0, maxDisplay);
                     const remainingJobs = job.jenkins_jobs.slice(maxDisplay);
@@ -962,24 +994,17 @@ function renderJobList() {
                         return `<span class="job-label" data-job-id="${job.id}" data-job-name="${name}" data-parameters='${parametersStr}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${name}</span>`;
                     }).join('');
                     
-                    let tooltipHtml = '';
-                    if (remainingJobs.length > 0) {
-                        tooltipHtml = `
-                            <div class="job-tooltip">
-                                ${remainingJobs.map(name => {
-                                    const jobParameters = getJobParametersForDisplay(job, name);
-                                    return `<div class="job-tooltip-item" data-job-id="${job.id}" data-job-name="${name}" data-parameters='${JSON.stringify(jobParameters)}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${name}</div>`;
-                                }).join('')}
-                            </div>
-                        `;
-                    }
+                    const hiddenLabels = remainingJobs.map(name => {
+                        const jobParameters = getJobParametersForDisplay(job, name);
+                        return `<span class="job-label hidden-job" data-job-id="${job.id}" data-job-name="${name}" data-parameters='${JSON.stringify(jobParameters)}' onmouseover="showJobParametersTooltip(event)" onmouseout="hideJobParametersTooltip()">${name}</span>`;
+                    }).join('');
                     
                     jobDisplay = `
-                        <div class="job-labels-container" ${remainingJobs.length > 0 ? 'data-tooltip="true"' : ''}>
+                        <div class="job-labels-container" data-job-id="${job.id}" ${remainingJobs.length > 0 ? 'data-has-more="true"' : ''}>
                             ${labels}
-                            ${remainingJobs.length > 0 ? `<span class="job-more-badge">+${remainingJobs.length}</span>` : ''}
+                            ${hiddenLabels}
+                            ${remainingJobs.length > 0 ? `<span class="job-more-badge" onclick="toggleJobExpand(${job.id}, event)">+${remainingJobs.length}</span>` : ''}
                             <span class="job-count-badge">${job.jenkins_jobs.length}</span>
-                            ${tooltipHtml}
                         </div>
                     `;
                 }
@@ -1277,6 +1302,122 @@ function initJobLabelEvents() {
             hideJobParametersTooltip();
         }
     });
+}
+
+// 展开/收起任务列表
+function toggleJobExpand(jobId, event) {
+    event.stopPropagation();
+    const container = document.querySelector(`.job-labels-container[data-job-id="${jobId}"]`);
+    if (!container) return;
+    
+    const isExpanded = container.classList.contains('expanded');
+    
+    if (isExpanded) {
+        container.classList.remove('expanded');
+        const badge = container.querySelector('.job-more-badge');
+        if (badge) {
+            const hiddenCount = container.querySelectorAll('.job-label.hidden-job').length;
+            badge.textContent = `+${hiddenCount}`;
+            badge.style.display = '';
+        }
+    } else {
+        container.classList.add('expanded');
+        const badge = container.querySelector('.job-more-badge');
+        if (badge) {
+            badge.style.display = 'none';
+        }
+    }
+}
+
+// 显示执行历史详情弹窗
+async function showExecutionDetail(historyId) {
+    try {
+        const history = await API.get('/api/execution-history');
+        const item = history.find(h => h.id == historyId);
+        
+        if (!item) {
+            showNotification('未找到执行记录', 'error');
+            return;
+        }
+        
+        let buildDetailsHtml = '';
+        if (item.build_details) {
+            try {
+                const buildDetails = typeof item.build_details === 'string' 
+                    ? JSON.parse(item.build_details) 
+                    : item.build_details;
+                
+                if (Array.isArray(buildDetails) && buildDetails.length > 0) {
+                    buildDetailsHtml = `
+                        <div class="modal-section">
+                            <h4>子任务执行详情</h4>
+                            <div class="build-details-list">
+                                ${buildDetails.map(detail => `
+                                    <div class="build-detail-card">
+                                        <div class="build-detail-header">
+                                            <span class="build-job-name">${detail.jobName}</span>
+                                            <span class="status-badge status-${detail.status}">${getStatusText(detail.status)}</span>
+                                        </div>
+                                        <div class="build-detail-body">
+                                            ${detail.branch ? `<div class="detail-row"><span class="detail-label">Git分支:</span><span class="detail-value branch-value">${detail.branch}</span></div>` : ''}
+                                            ${detail.buildNumber ? `<div class="detail-row"><span class="detail-label">构建号:</span><span class="detail-value">#${detail.buildNumber}</span></div>` : ''}
+                                            ${detail.buildUrl ? `<div class="detail-row"><span class="detail-label">构建链接:</span><a href="${detail.buildUrl}" target="_blank" class="detail-value build-link-full">查看构建详情 🔗</a></div>` : ''}
+                                            ${detail.error ? `<div class="detail-row error-row"><span class="detail-label">错误信息:</span><span class="detail-value error-value">${detail.error}</span></div>` : ''}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('解析构建详情失败:', e);
+            }
+        }
+        
+        const modalHtml = `
+            <div class="modal-overlay" id="execution-detail-modal" onclick="closeExecutionDetailModal(event)">
+                <div class="modal-content execution-detail-modal" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>执行详情</h3>
+                        <button class="modal-close" onclick="closeExecutionDetailModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="modal-section">
+                            <div class="detail-row"><span class="detail-label">任务名称:</span><span class="detail-value">${item.job_name || `任务 #${item.job_id}`}</span></div>
+                            <div class="detail-row"><span class="detail-label">执行状态:</span><span class="status-badge status-${item.status}">${getStatusText(item.status)}</span></div>
+                            <div class="detail-row"><span class="detail-label">开始时间:</span><span class="detail-value">${formatDateTime(item.start_time)}</span></div>
+                            ${item.end_time ? `<div class="detail-row"><span class="detail-label">结束时间:</span><span class="detail-value">${formatDateTime(item.end_time)}</span></div>` : ''}
+                            ${item.end_time ? `<div class="detail-row"><span class="detail-label">执行时长:</span><span class="detail-value">${calculateDuration(item.start_time, item.end_time)}</span></div>` : ''}
+                        </div>
+                        ${item.log_output ? `
+                            <div class="modal-section">
+                                <h4>执行日志</h4>
+                                <pre class="log-output">${item.log_output}</pre>
+                            </div>
+                        ` : ''}
+                        ${buildDetailsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        document.body.style.overflow = 'hidden';
+        
+    } catch (error) {
+        console.error('加载执行详情失败:', error);
+        showNotification('加载执行详情失败: ' + error.message, 'error');
+    }
+}
+
+function closeExecutionDetailModal(event) {
+    if (event && event.target !== event.currentTarget) return;
+    const modal = document.getElementById('execution-detail-modal');
+    if (modal) {
+        modal.remove();
+        document.body.style.overflow = '';
+    }
 }
 
 async function deleteJob(jobId) {

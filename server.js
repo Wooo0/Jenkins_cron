@@ -417,6 +417,17 @@ class DatabaseManager {
                 console.log('jenkins_jobs 字段已存在');
             }
             
+            // 检查 execution_history 表是否包含 build_details 字段
+            const hasBuildDetailsField = await this.hasColumn('execution_history', 'build_details');
+            
+            if (!hasBuildDetailsField) {
+                console.log('检测到缺少 build_details 字段，正在添加...');
+                await this.addColumn('execution_history', 'build_details', 'TEXT');
+                console.log('成功添加 build_details 字段到 execution_history 表');
+            } else {
+                console.log('build_details 字段已存在');
+            }
+            
             console.log('数据库迁移检查完成');
         } catch (error) {
             console.error('数据库迁移失败:', error);
@@ -822,9 +833,19 @@ class CronJobManager {
                 console.log(logOutput);
             }
             
+            // 保存详细的构建信息
+            const buildDetails = JSON.stringify(buildResults.map(result => ({
+                jobName: result.jobName,
+                status: result.status,
+                buildNumber: result.buildNumber || null,
+                buildUrl: result.buildUrl || null,
+                branch: result.branch || null,
+                error: result.error || null
+            })));
+            
             // 更新执行历史记录为完成状态
-            await dbManager.run(`UPDATE execution_history SET status = ?, end_time = ?, log_output = ? WHERE job_id = ? AND status = 'started'`,
-                [finalStatus, dbManager.formatDateTime(), logOutput, job.id]);
+            await dbManager.run(`UPDATE execution_history SET status = ?, end_time = ?, log_output = ?, build_details = ? WHERE job_id = ? AND status = 'started'`,
+                [finalStatus, dbManager.formatDateTime(), logOutput, buildDetails, job.id]);
             
         } catch (error) {
             console.error(`任务 ${job.name} 执行失败:`, error.message);
@@ -909,12 +930,37 @@ class CronJobManager {
                 }
                 
                 const buildLocation = await jenkins.triggerBuild(jobName, taskParameters);
+                
+                // 从 buildLocation 提取构建号
+                let buildNumber = null;
+                let buildUrl = null;
+                if (buildLocation) {
+                    // buildLocation 通常是相对路径如 "job/name/123/" 或完整 URL
+                    const urlParts = buildLocation.split('/').filter(p => p);
+                    const lastPart = urlParts[urlParts.length - 1];
+                    if (/^\d+$/.test(lastPart)) {
+                        buildNumber = parseInt(lastPart);
+                    }
+                    buildUrl = buildLocation.startsWith('http') ? buildLocation : `${jenkinsConfig.url}/${buildLocation}`;
+                }
+                
+                // 提取 Git 分支信息
+                let branch = null;
+                if (taskParameters && taskParameters.BRANCH) {
+                    branch = taskParameters.BRANCH;
+                } else if (taskParameters && taskParameters.branch) {
+                    branch = taskParameters.branch;
+                }
+                
                 buildResults.push({
                     jobName: jobName,
                     buildLocation: buildLocation,
+                    buildNumber: buildNumber,
+                    buildUrl: buildUrl,
+                    branch: branch,
                     status: 'success'
                 });
-                console.log(`任务执行成功: ${jobName}`);
+                console.log(`任务执行成功: ${jobName}, 构建号: ${buildNumber}, 分支: ${branch}`);
             } catch (error) {
                 console.error(`任务执行失败: ${jobName}`, error);
                 buildResults.push({
@@ -1607,9 +1653,19 @@ app.post('/api/scheduled-jobs/:id/execute', authenticateToken, async (req, res) 
                 console.log(logOutput);
             }
             
+            // 保存详细的构建信息
+            const buildDetails = JSON.stringify(buildResults.map(result => ({
+                jobName: result.jobName,
+                status: result.status,
+                buildNumber: result.buildNumber || null,
+                buildUrl: result.buildUrl || null,
+                branch: result.branch || null,
+                error: result.error || null
+            })));
+            
             // 更新执行历史记录为完成状态
-            await dbManager.run(`UPDATE execution_history SET status = ?, end_time = ?, log_output = ? WHERE job_id = ? AND status = 'started'`,
-                [finalStatus, dbManager.formatDateTime(), logOutput, job.id]);
+            await dbManager.run(`UPDATE execution_history SET status = ?, end_time = ?, log_output = ?, build_details = ? WHERE job_id = ? AND status = 'started'`,
+                [finalStatus, dbManager.formatDateTime(), logOutput, buildDetails, job.id]);
             
             res.json({
                 message: message,
@@ -1644,7 +1700,20 @@ app.get('/api/execution-history', authenticateToken, async (req, res) => {
                      LIMIT 10`;
         
         const rows = await dbManager.query(sql);
-        res.json(rows);
+        
+        // 确保 build_details 字段被正确解析
+        const processedRows = rows.map(row => {
+            if (row.build_details && typeof row.build_details === 'string') {
+                try {
+                    row.build_details = JSON.parse(row.build_details);
+                } catch (e) {
+                    console.error('解析 build_details 失败:', e);
+                }
+            }
+            return row;
+        });
+        
+        res.json(processedRows);
     } catch (error) {
         console.error('获取执行历史失败:', error);
         res.status(500).json({ error: '获取执行历史失败' });

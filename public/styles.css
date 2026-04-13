@@ -63,21 +63,32 @@ header h1 {
     max-width: 1400px;
     margin: 0 auto;
     background: white;
-    min-height: calc(100vh - 200px);
+    height: calc(100vh - 200px);
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
 }
 
 /* 主内容区域 */
 main {
     padding: 2rem;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .tab-content {
     display: none;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .tab-content.active {
-    display: block;
+    display: flex;
 }
 
 /* 仪表板样式 */
@@ -86,6 +97,13 @@ main {
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: 2rem;
     margin-bottom: 3rem;
+    flex-shrink: 0;
+}
+
+.recent-activity {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .stat-card {
@@ -133,6 +151,19 @@ main {
     color: #666;
 }
 
+/* 节标题样式 */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-shrink: 0;
+}
+
+.section-header h2 {
+    margin: 0;
+}
+
 /* 任务标签页样式 */
 .job-tabs-container {
     background: white;
@@ -140,6 +171,7 @@ main {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-bottom: 1.5rem;
     overflow: hidden;
+    flex-shrink: 0;
 }
 
 .job-tabs {
@@ -239,7 +271,10 @@ main {
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     overflow: hidden;
-    max-height: calc(100vh - 350px);
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
 }
 
@@ -285,6 +320,13 @@ main {
 .empty-state p {
     color: #6c757d;
     font-size: 0.95rem;
+}
+
+/* 配置列表容器 */
+.config-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 /* 表格样式 */
